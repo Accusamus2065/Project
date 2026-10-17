@@ -49,6 +49,9 @@ def initialize(path):
             pack_id INTEGER NOT NULL REFERENCES products(id),
             seal_id INTEGER NOT NULL REFERENCES products(id),
             start_date TEXT NOT NULL, UNIQUE(harvest_id,pack_id,seal_id))""")
+        db.execute("CREATE INDEX IF NOT EXISTS audit_at_idx ON audit(at)")
+        db.execute("CREATE INDEX IF NOT EXISTS audit_actor_idx ON audit(actor,id)")
+        db.execute("CREATE INDEX IF NOT EXISTS audit_action_idx ON audit(action,id)")
         # Only established links prove a process. Never guess the picking source.
         for link in db.execute('SELECT * FROM process_links').fetchall():
             db.execute("UPDATE products SET process='pack' WHERE id=? AND process IS NULL",(link['source_id'],))
@@ -145,6 +148,15 @@ def _work_items(db, day):
         "SELECT r.*,u.name FROM reports r JOIN users u ON u.id=r.user_id WHERE date=? ORDER BY r.id",
         (day,),
     ).fetchall()
+    # Retiring a finished item must not hide unresolved packing from prior days.
+    reported_ids = {p['product_id'] for r in reports for p in json.loads(r['pieces'])}
+    pending_targets = {
+        target for source, target in db.execute(
+            "SELECT source_id,target_id FROM process_links WHERE start_date<=? "
+            "UNION SELECT pack_id,seal_id FROM product_workflows WHERE start_date<=?",
+            (day, day),
+        ) if source in reported_ids
+    }
     result = []
     for product in db.execute(
         "SELECT * FROM products WHERE start_date<=? ORDER BY product,id", (day,)
@@ -168,7 +180,7 @@ def _work_items(db, day):
             "SELECT s.*,u.name AS recorder FROM direct_sales s JOIN users u ON u.id=s.actor WHERE product_id=? AND date=?",
             (product["id"], day),
         ).fetchone()
-        if product["deleted"] and not contributors and not count and not sale:
+        if product["deleted"] and not contributors and not count and not sale and product['id'] not in pending_targets:
             continue
         expected = sum(c["quantity"] for c in contributors)
         signature = hashlib.sha256(

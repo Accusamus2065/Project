@@ -14,7 +14,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from . import core, monthly
+from . import core, monthly, audit_log
 
 WEB = Path(__file__).with_name("web")
 
@@ -104,6 +104,10 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 return self.send(401, {"error": "请先登录"})
             try:
+                if parsed.path == "/api/audit":
+                    db.execute("BEGIN")
+                    return self.send(200, audit_log.browse(db, user,
+                        {k:v[0] for k,v in parse_qs(parsed.query).items()}))
                 if parsed.path in ("/api/monthly", "/api/monthly-export"):
                     query = parse_qs(parsed.query)
                     db.execute("BEGIN")

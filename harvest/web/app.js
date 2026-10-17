@@ -45,7 +45,7 @@ function bindDate() {
  };
 }
 function heading(title, subtitle, action = '') { return `<div class="heading"><div><div class="eyebrow">${state.user.role === 'manager' ? 'NEBO / 经理工作台' : state.user.role === 'checker' ? 'NEBO / 当天点货' : 'NEBO / 我的工作'}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="date-control">${['users', 'lots', 'audit', 'exports'].includes(page) ? '' : `<input aria-label="工作日期" id="work-date" type="date" value="${day}" max="${localDate()}">`}${action}</div></div>` }
-const content = html => document.querySelector('#content').innerHTML = html;
+const content = html => { document.querySelector('#content').innerHTML = html; queueMicrotask(enhanceLotPickers); };
 const processNames={harvest:'采摘',pack:'分包',seal:'封膜'};
 const stageName=p=>processNames[p.process]||'历史项目';
 const productLabel=p=>`${p.product}（${p.unit}）`;
@@ -55,32 +55,52 @@ const lotOptions = (id, unique = false) => `<option value="">选择产品</optio
 let closeLotPicker = null;
 let lotPickerSequence = 0;
 function enhanceLotPickers() {
-    document.querySelectorAll('.piece-data select').forEach(select => {
-        const wrapper = document.createElement('span'); wrapper.className = 'lot-picker';
-        select.before(wrapper); wrapper.append(select); select.hidden = true; select.tabIndex = -1;
+    document.querySelectorAll('select').forEach(select => {
+        if (select._syncPicker) { select._syncPicker(); return; }
+        const isPiece = !!select.closest('.piece-data');
+        const fieldLabel = select.getAttribute('aria-label') || select.closest('label')?.childNodes[0]?.textContent?.trim() || '请选择';
+        const wrapper = document.createElement('span'); wrapper.className = isPiece ? 'lot-picker' : 'lot-picker standard-picker';
+        select.before(wrapper); wrapper.append(select); select.classList.add('picker-native'); select.tabIndex = -1; select.setAttribute('aria-hidden','true');
         const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'lot-trigger';
         trigger.setAttribute('role', 'combobox'); trigger.setAttribute('aria-haspopup', 'listbox');
-        trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-required', 'true');
-        trigger.setAttribute('aria-label', select.getAttribute('aria-label'));
+        trigger.setAttribute('aria-expanded', 'false');
+        trigger.setAttribute('aria-label', fieldLabel);
         const label = document.createElement('span'); label.className = 'lot-trigger-label'; trigger.append(label);
         const arrow = document.createElement('span'); arrow.className = 'lot-chevron'; arrow.setAttribute('aria-hidden', 'true'); trigger.append(arrow);
         const list = document.createElement('div'); list.className = 'lot-menu'; list.id = 'lot-menu-' + (++lotPickerSequence);
-        list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', select.getAttribute('aria-label')); list.hidden = true;
+        list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', fieldLabel); list.hidden = true;
         trigger.setAttribute('aria-controls', list.id); wrapper.append(trigger, list);
-        const choices = Array.from(select.options).filter(option => option.value);
-        let active = -1, open = false, search = '', searchAt = 0;
-        const options = choices.map((choice, index) => {
-            const item = document.createElement('div'); item.className = 'lot-option'; item.id = list.id + '-' + index;
-            item.setAttribute('role', 'option'); item.textContent = choice.textContent;
-            item.onpointerdown = e => e.preventDefault();
-            item.onclick = () => choose(index); list.append(item); return item;
-        });
-        if (!choices.length) { const empty = document.createElement('div'); empty.className = 'lot-empty'; empty.textContent = '暂无可选产品，请联系经理或检查是否已添加'; list.append(empty) }
-        function sync() { label.textContent = select.selectedOptions[0]?.textContent || '选择产品'; trigger.classList.toggle('placeholder', !select.value); options.forEach((o, i) => o.setAttribute('aria-selected', String(choices[i].value === select.value))) }
+        let choices=[], options=[], active=-1, open=false, search='', searchAt=0, optionHTML='';
+        function sync() {
+            wrapper.hidden=select.hidden; trigger.disabled=select.disabled;
+            trigger.setAttribute('aria-required',String(select.required));
+            label.textContent=select.selectedOptions[0]?.textContent || '请选择';
+            trigger.classList.toggle('placeholder',select.required && !select.value);
+            const signature=String(select.required)+select.innerHTML;
+            if(optionHTML!==signature || !options.length) {
+                optionHTML=signature; list.replaceChildren();
+                choices=[...select.options].filter(o=>!o.disabled && (!select.required || o.value));
+                options=choices.map((choice,index)=>{
+                    const item=document.createElement('div');item.className='lot-option';item.id=list.id+'-'+index;
+                    item.setAttribute('role','option');item.textContent=choice.textContent;
+                    item.onpointerdown=e=>e.preventDefault();item.onclick=()=>choose(index);list.append(item);return item;
+                });
+                if(!options.length){const empty=document.createElement('div');empty.className='lot-empty';empty.textContent='暂无可选项目';list.append(empty)}
+            }
+            options.forEach((o,i)=>o.setAttribute('aria-selected',String(choices[i].value===select.value)));
+            if(select.hidden||select.disabled)close();
+        }
+        select._syncPicker=sync;
         function highlight(index) { active = index; options.forEach((o, i) => o.classList.toggle('active', i === active)); if (options[active]) { trigger.setAttribute('aria-activedescendant', options[active].id); options[active].scrollIntoView({ block: 'nearest' }) } }
         function close() { open = false; list.hidden = true; trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-activedescendant'); if (closeLotPicker === close) closeLotPicker = null }
-        function show() { if (open) return; closeLotPicker?.(); open = true; list.hidden = false; trigger.setAttribute('aria-expanded', 'true'); closeLotPicker = close; highlight(Math.max(0, choices.findIndex(o => o.value === select.value))) }
-        function choose(index) { if (!choices[index]) return; select.value = choices[index].value; trigger.removeAttribute('aria-invalid'); sync(); close(); trigger.focus(); select.dispatchEvent(new Event('change', { bubbles: true })); const rowIndex = [...document.querySelectorAll('.piece-data select')].indexOf(select); entry(); document.querySelectorAll('.lot-trigger')[rowIndex]?.focus() }
+        function show() { sync(); if (open || select.disabled || select.hidden) return; closeLotPicker?.(); open = true; list.hidden = false; trigger.setAttribute('aria-expanded', 'true'); closeLotPicker = close; highlight(Math.max(0, choices.findIndex(o => o.value === select.value))) }
+        function choose(index) {
+            if(!choices[index])return;
+            select.value=choices[index].value;select.setCustomValidity('');trigger.removeAttribute('aria-invalid');sync();close();trigger.focus();
+            select.dispatchEvent(new Event('change',{bubbles:true}));
+            if(isPiece){const rowIndex=[...document.querySelectorAll('.piece-data select')].indexOf(select);entry();document.querySelectorAll('.piece-data .lot-trigger')[rowIndex]?.focus()}
+            else enhanceLotPickers();
+        }
         trigger.onclick = () => open ? close() : show();
         trigger.onkeydown = e => {
             if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); close(); return }
@@ -93,7 +113,7 @@ function enhanceLotPickers() {
             if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); const now = Date.now(); search = (now - searchAt > 700 ? '' : search) + e.key.toLowerCase(); searchAt = now; show(); const i = choices.findIndex(o => o.textContent.toLowerCase().startsWith(search)); if (i >= 0) highlight(i) }
         };
         wrapper.addEventListener('focusout', e => { if (!wrapper.contains(e.relatedTarget)) close() });
-        select.addEventListener('invalid', e => { e.preventDefault(); trigger.setAttribute('aria-invalid', 'true'); trigger.focus(); show(); notify('请选择产品') });
+        select.addEventListener('invalid', e => { e.preventDefault(); trigger.setAttribute('aria-invalid', 'true'); trigger.focus(); show(); notify('请选择'+fieldLabel) });
         sync();
     });
 }
@@ -102,11 +122,21 @@ function newDraft() { return { user_id: state.user.id, hours: '', pieces: [], ti
 function captureDraft() { const form = document.querySelector('#entry-form'); if (!form) return; draft = { ...draft, hours: form.elements.hours.value, pieces: [...form.querySelectorAll('.piece-data')].map((row, i) => ({ product_id: Number(row.querySelector('select').value) || '', snapshot_id: draft.pieces[i]?.product_id === Number(row.querySelector('select').value) ? draft.pieces[i]?.snapshot_id : undefined, quantity: row.querySelector('input').value })), timed: [...form.querySelectorAll('.time-data')].map(row => ({ hours: row.querySelector('input[type="number"]').value, memo: row.querySelector('input[type="text"]').value })), reason: form.elements.reason?.value || '' } }
 function entry() {
     const existing = state.reports.find(r => r.user_id === state.user.id); if (!draft && existing) { content(heading('今天的记录已提交', '金额按提交时的单价计算。你可以在工作记录中修正填写内容。') + reportCard(existing) + `<button id="see-reports" class="primary">查看工作记录</button>`); document.querySelector('#see-reports').onclick = () => { page = 'overview'; render() }; return } draft = draft || newDraft(); const employee = state.users.find(u => u.id === draft.user_id) || state.user; const rate = draft.rate ?? employee.rate;
-    content(heading(draft.version ? '修改工作记录' : '记录今天的工作', `${esc(employee.name)} · 当天总工时包含计件工作和计时工作。`) + `<div class="grid"><form id="entry-form"><section class="card"><div class="card-head"><div><h2><span class="step">01</span>计件工作</h2><p>选择今天完成的采摘、分包或封膜项目，按对应单位填写数量。</p></div><small>按产品单价计算</small></div>${draft.pieces.length ? '<div class="piece-row row-head"><span>产品 / 规格</span><span>数量</span><span class="amount">金额</span><span></span></div>' : ''}${draft.pieces.map((p, i) => { const l = state.products.find(l => l.id === Number(p.product_id)); return `<div class="piece-row piece-data"><span class="mobile-piece-title">计件项目 ${i + 1}</span><div><select aria-label="第 ${i + 1} 项产品" required>${lotOptions(p.product_id, true)}</select><small class="lot-rate">${l ? `${cash(draft.snapshotPrices?.[p.snapshot_id] ?? draft.prices?.[l.id] ?? l.price)} / ${esc(l.unit)}` : '请选择产品'}</small></div><label class="piece-quantity"><span class="mobile-field-label">数量</span><input aria-label="第 ${i + 1} 项数量" inputmode="numeric" type="number" min="1" max="10000000" step="1" value="${esc(p.quantity)}" required></label><span class="amount line-amount">0.00</span><button class="remove" type="button" data-remove-piece="${i}" aria-label="移除计件项">×</button></div>` }).join('')}<button class="add" type="button" id="add-piece" aria-label="添加计件工作">＋ 添加</button></section><section class="card"><div class="card-head"><div><h2><span class="step">02</span>计时工作</h2><p>例如接种、上包；没有计时工作可跳过。</p></div><small>${cash(rate)} / 小时</small></div>${draft.timed.map((t, i) => `<div class="time-row time-data"><label>小时数<input type="number" inputmode="decimal" min="0.05" max="24" step="0.05" value="${esc(t.hours)}" required></label><label><span id="time-label-${i}">工作备注</span><input aria-labelledby="time-label-${i}" type="text" maxlength="500" placeholder="例如：接种、上包。" value="${esc(t.memo)}" required></label><button class="remove" type="button" data-remove-time="${i}" aria-label="移除计时项">×</button></div>`).join('')}<button class="add" type="button" id="add-time" aria-label="添加计时工作">＋ 添加</button></section><section class="card"><h2><span class="step">03</span>当天总工时</h2><div class="hours-equation"><label>计件工时（小时）<input name="hours" type="number" inputmode="decimal" min="0" max="24" step="0.05"  value="${esc(draft.hours)}"></label><span class="hours-plus" aria-hidden="true">＋</span><div class="hours-auto"><span>计时工时（自动汇总）</span><output id="timed-hours" aria-live="polite">0 小时</output></div></div><div class="hours-result">当天总工时 <output id="total-hours" aria-live="polite">0 小时</output></div><div class="hint">只填写计件工作的时长，上方计时工作自动相加。仅做计时工作时可留空。</div>${draft.version ? `<label class="full">修改原因<input name="reason" maxlength="500" value="${esc(draft.reason)}" required placeholder="填写原因"></label>` : ''}<div id="entry-error" class="error" role="alert"></div></section></form><aside class="card summary" id="entry-summary" tabindex="-1"><div class="summary-label">当天工作产值</div><div class="big-money" id="sum-total">0.00</div><dl><div><dt>计件金额</dt><dd id="sum-pieces">0.00</dd></div><div><dt>计时金额</dt><dd id="sum-time">0.00</dd></div><div><dt>总工时</dt><dd id="sum-hours">—</dd></div></dl><hr><div class="summary-label">平均每小时产值</div><div class="efficiency"><strong id="sum-efficiency">—</strong><small>/ 小时</small></div><div class="summary-result" id="sum-reference"></div><div class="summary-actions"><button class="primary" type="submit" form="entry-form">${draft.version ? '保存修正' : '提交今日记录'} →</button>${draft.version ? '<button class="summary-secondary" type="button" id="cancel-edit">取消修改</button>' : ''}</div><p class="summary-note">${draft.version ? '原有产品和计时工作保留提交时价格。' : '提交后保存当时单价。入库核对结果可在工作记录中查看。'}</p></aside><div class="mobile-submitbar"><div><small>当天产值 / 每小时</small><strong id="mobile-total">0.00 <span> / —</span></strong></div><button type="button" class="primary" id="review-summary">查看汇总 ↓</button></div></div>`);
+    content(heading(draft.version ? '修改工作记录' : '记录今天的工作', `${esc(employee.name)} · 当天总工时包含计件工作和计时工作。`) + `<div class="grid"><form id="entry-form"><section class="card"><div class="card-head"><div><h2><span class="step">01</span>计件工作</h2><p>选择工作项目，填写完成数量。</p></div><small>按产品单价计算</small></div>${draft.pieces.length ? '<div class="piece-row row-head"><span>产品 / 规格</span><span>数量</span><span class="amount">金额</span><span></span></div>' : ''}${draft.pieces.map((p, i) => { const l = state.products.find(l => l.id === Number(p.product_id)); return `<div class="piece-row piece-data"><span class="mobile-piece-title">计件项目 ${i + 1}</span><div><select aria-label="第 ${i + 1} 项产品" required>${lotOptions(p.product_id, true)}</select><small class="lot-rate">${l ? `${cash(draft.snapshotPrices?.[p.snapshot_id] ?? draft.prices?.[l.id] ?? l.price)} / ${esc(l.unit)}` : '请选择产品'}</small></div><label class="piece-quantity"><span class="mobile-field-label">数量</span><input aria-label="第 ${i + 1} 项数量" inputmode="numeric" type="number" min="1" max="10000000" step="1" value="${esc(p.quantity)}" required></label><span class="amount line-amount">0.00</span><button class="remove" type="button" data-remove-piece="${i}" aria-label="移除计件项">×</button></div>` }).join('')}<button class="add" type="button" id="add-piece" aria-label="添加计件工作">＋ 添加</button></section><section class="card"><div class="card-head"><div><h2><span class="step">02</span>计时工作</h2><p>没有计时工作可跳过。</p></div><small>${cash(rate)} / 小时</small></div>${draft.timed.map((t, i) => `<div class="time-row time-data"><label>小时数<input type="number" inputmode="decimal" min="0.05" max="24" step="0.05" value="${esc(t.hours)}" required></label><label><span id="time-label-${i}">工作备注</span><input aria-labelledby="time-label-${i}" type="text" maxlength="500" placeholder="例如：接种、上包。" value="${esc(t.memo)}" required></label><button class="remove" type="button" data-remove-time="${i}" aria-label="移除计时项">×</button></div>`).join('')}<button class="add" type="button" id="add-time" aria-label="添加计时工作">＋ 添加</button></section><section class="card"><h2><span class="step">03</span>当天总工时</h2><div class="hours-equation"><label>计件工时（小时）<input name="hours" type="number" inputmode="decimal" min="0" max="24" step="0.05"  value="${esc(draft.hours)}"></label><span class="hours-plus" aria-hidden="true">＋</span><div class="hours-auto"><span>计时工时（自动汇总）</span><output id="timed-hours" aria-live="polite">0 小时</output></div></div><div class="hours-result">当天总工时 <output id="total-hours" aria-live="polite">0 小时</output></div><div class="hint">只填写计件工作的时长，上方计时工作自动相加。仅做计时工作时可留空。</div>${draft.version ? `<label class="full">修改原因<input name="reason" maxlength="500" value="${esc(draft.reason)}" required placeholder="填写原因"></label>` : ''}<div id="entry-error" class="error" role="alert"></div></section></form><aside class="card summary" id="entry-summary" tabindex="-1"><div class="summary-label">当天工作产值</div><div class="big-money" id="sum-total">0.00</div><dl><div><dt>计件金额</dt><dd id="sum-pieces">0.00</dd></div><div><dt>计时金额</dt><dd id="sum-time">0.00</dd></div><div><dt>总工时</dt><dd id="sum-hours">—</dd></div></dl><hr><div class="summary-label">平均每小时产值</div><div class="efficiency"><strong id="sum-efficiency">—</strong><small>/ 小时</small></div><div class="summary-result" id="sum-reference"></div><div class="summary-actions"><button class="primary" type="submit" form="entry-form">${draft.version ? '保存修正' : '提交今日记录'} →</button>${draft.version ? '<button class="summary-secondary" type="button" id="cancel-edit">取消修改</button>' : ''}</div><p class="summary-note">${draft.version ? '原有产品和计时工作保留提交时价格。' : '提交后保存当时单价。入库核对结果可在工作记录中查看。'}</p></aside><div class="mobile-submitbar"><div><small>当天产值 / 总工时</small><strong id="mobile-total">0.00 <span> / —</span></strong></div><button type="button" class="primary" id="review-summary">核对并提交</button></div></div>`);
     document.querySelector('#add-piece').onclick = () => { captureDraft(); draft.pieces.push({ product_id: '', quantity: '' }); entry(); document.querySelector('.piece-data:last-of-type .lot-trigger')?.focus() }; document.querySelector('#add-time').onclick = () => { captureDraft(); draft.timed.push({ hours: '', memo: '' }); entry(); document.querySelector('.time-data:last-of-type input')?.focus() }; document.querySelectorAll('[data-remove-piece]').forEach(b => b.onclick = () => { captureDraft(); draft.pieces.splice(+b.dataset.removePiece, 1); entry() }); document.querySelectorAll('[data-remove-time]').forEach(b => b.onclick = () => { captureDraft(); draft.timed.splice(+b.dataset.removeTime, 1); entry() }); document.querySelector('#cancel-edit')?.addEventListener('click', () => { dayDrafts.delete(day); draft = null; page = 'overview'; render() });
-    const form = document.querySelector('#entry-form'); form.oninput = form.onchange = () => { document.querySelector('#entry-error').textContent = ''; calculate() }; form.onsubmit = saveWorkRecord; document.querySelector('#review-summary').onclick = () => { const summary = document.querySelector('#entry-summary'); summary.scrollIntoView({ block: 'start', behavior: 'smooth' }); summary.focus({ preventScroll: true }) }; enhanceLotPickers(); calculate(); bindDate();
+    const form = document.querySelector('#entry-form'); form.oninput = form.onchange = () => { document.querySelector('#entry-error').textContent = ''; calculate() }; form.onsubmit = saveWorkRecord; document.querySelector('#review-summary').onclick = reviewWorkRecord; enhanceLotPickers(); calculate(); bindDate();
 }
 
+function reviewWorkRecord() {
+ const form = document.querySelector('#entry-form');
+ if (!form.reportValidity()) return;
+ captureDraft();
+ if (!draft.pieces.length && !draft.timed.length) { notify('请先添加计件或计时工作'); return; }
+ const lines = draft.pieces.map(p => `<li>${esc(state.products.find(x=>x.id===+p.product_id)?.product)}<strong>${esc(p.quantity)} ${esc(state.products.find(x=>x.id===+p.product_id)?.unit)}</strong></li>`).join('');
+ showModal('确认工作记录', `<p class="muted">${esc(day)} · ${esc((state.users.find(u=>u.id===draft.user_id)||state.user).name)}</p><ul class="submit-review">${lines}${draft.timed.map(t=>`<li>${esc(t.memo)}<strong>${esc(t.hours)} 小时</strong></li>`).join('')}</ul><div class="review-totals"><div><small>总工时</small><strong>${esc(document.querySelector('#sum-hours').textContent)}</strong></div><div><small>总产值</small><strong>${esc(document.querySelector('#sum-total').textContent)}</strong></div></div><div class="form-actions"><button id="review-back">继续修改</button><button class="primary" id="review-confirm">确认提交</button></div>`);
+ document.querySelector('#review-back').onclick=()=>modal.close();
+ document.querySelector('#review-confirm').onclick=()=>{modal.close();form.requestSubmit()};
+}
 async function saveWorkRecord(e) {
  e.preventDefault();
  const form = e.currentTarget;
@@ -131,7 +161,7 @@ async function saveWorkRecord(e) {
 }
 
 function validInputNumber(input) { return input && input.value !== '' && input.validity.valid && Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : 0 }
-function calculate() { captureDraft(); let pieces = 0; document.querySelectorAll('.piece-data').forEach((row, i) => { const p = draft.pieces[i], lot = state.products.find(l => l.id === +p.product_id), price = lot ? (draft.snapshotPrices?.[p.snapshot_id] ?? draft.prices?.[lot.id] ?? lot.price) : 0; const amount = price * validInputNumber(row.querySelector('input[type=number]')); pieces += amount; row.querySelector('.line-amount').textContent = cash(amount); row.querySelector('.lot-rate').textContent = lot ? `${cash(price)} / ${lot.unit}` : '请选择产品' }); const user = state.users.find(u => u.id === draft.user_id) || state.user, rate = draft.rate ?? user.rate; const timedMinutes = [...document.querySelectorAll('.time-data input[type=number]')].reduce((a, input) => a + Math.round(validInputNumber(input) * 60), 0); const time = Math.round(timedMinutes * rate / 60); const total = pieces + time, hours = (Math.round(validInputNumber(document.querySelector('#entry-form [name=hours]')) * 60) + timedMinutes) / 60; document.querySelector('#timed-hours').textContent = `${Number((timedMinutes / 60).toFixed(2))} 小时`; document.querySelector('#total-hours').textContent = `${Number(hours.toFixed(2))} 小时`; document.querySelector('#sum-total').textContent = cash(total); document.querySelector('#sum-pieces').textContent = cash(pieces); document.querySelector('#sum-time').textContent = cash(time); document.querySelector('#sum-hours').textContent = hours ? `${Number(hours.toFixed(2))} 小时` : '—'; document.querySelector('#sum-efficiency').textContent = hours ? cash(total / hours) : '—'; document.querySelector('#mobile-total').innerHTML = `${cash(total)} <span>/ ${hours ? cash(total / hours) : '—'}</span>`; document.querySelector('#sum-reference').textContent = hours ? `个人计时时薪参考：${cash(rate)} / 小时` : '' }
+function calculate() { captureDraft(); let pieces = 0; document.querySelectorAll('.piece-data').forEach((row, i) => { const p = draft.pieces[i], lot = state.products.find(l => l.id === +p.product_id), price = lot ? (draft.snapshotPrices?.[p.snapshot_id] ?? draft.prices?.[lot.id] ?? lot.price) : 0; const amount = price * validInputNumber(row.querySelector('input[type=number]')); pieces += amount; row.querySelector('.line-amount').textContent = cash(amount); row.querySelector('.lot-rate').textContent = lot ? `${cash(price)} / ${lot.unit}` : '请选择产品' }); const user = state.users.find(u => u.id === draft.user_id) || state.user, rate = draft.rate ?? user.rate; const timedMinutes = [...document.querySelectorAll('.time-data input[type=number]')].reduce((a, input) => a + Math.round(validInputNumber(input) * 60), 0); const time = Math.round(timedMinutes * rate / 60); const total = pieces + time, hours = (Math.round(validInputNumber(document.querySelector('#entry-form [name=hours]')) * 60) + timedMinutes) / 60; document.querySelector('#timed-hours').textContent = `${Number((timedMinutes / 60).toFixed(2))} 小时`; document.querySelector('#total-hours').textContent = `${Number(hours.toFixed(2))} 小时`; document.querySelector('#sum-total').textContent = cash(total); document.querySelector('#sum-pieces').textContent = cash(pieces); document.querySelector('#sum-time').textContent = cash(time); document.querySelector('#sum-hours').textContent = hours ? `${Number(hours.toFixed(2))} 小时` : '—'; document.querySelector('#sum-efficiency').textContent = hours ? cash(total / hours) : '—'; document.querySelector('#mobile-total').innerHTML = `${cash(total)} <span>/ ${Number(hours.toFixed(2))} 小时</span>`; document.querySelector('#sum-reference').textContent = hours ? `个人计时时薪参考：${cash(rate)} / 小时` : '' }
 function sortedReportPieces(pieces) {
     const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
     const order = { harvest: 0, pack: 1, seal: 2 };
@@ -150,7 +180,7 @@ function sortedReportPieces(pieces) {
 function reportCard(r) { return `<div class="card"><div class="card-head"><h2>${esc(r.name)} · ${esc(r.date)}</h2>${badge(r.status)}</div><div class="detail-list">${sortedReportPieces(r.pieces).map(p => `<div>${esc(p.product)} ${stageBadge(p)} &nbsp; ${p.quantity} ${esc(p.unit)} × ${cash(p.price)} = <strong>${cash(p.quantity * p.price)}</strong></div>`).join('')}${r.timed.map(t => `<div>${esc(t.memo)} &nbsp; ${t.minutes / 60} 小时 × ${cash(r.rate)}</div>`).join('')}<hr>总工时 ${r.minutes / 60} 小时 · 总金额 <strong>${cash(r.amount)}</strong> · 每小时产值 <strong>${cash(r.amount * 60 / r.minutes)}</strong></div></div>` }
 function editReport(r) { draft = { user_id: r.user_id, hours: (r.minutes - r.timed.reduce((sum, t) => sum + t.minutes, 0)) / 60, rate: r.rate, version: r.version, snapshotPrices: Object.fromEntries(r.pieces.map(p => [p.snapshot_id, p.price])), prices: Object.fromEntries(r.pieces.map(p => [p.product_id, p.price])), pieces: r.pieces.map(p => ({ ...p })), timed: r.timed.map(t => ({ hours: t.minutes / 60, memo: t.memo })), reason: '' }; page = 'entry'; render() }
 function overview() { const rows = state.reports, total = rows.reduce((a, r) => a + r.amount, 0), minutes = rows.reduce((a, r) => a + r.minutes, 0), manager = state.user.role === 'manager'; content(heading(manager ? '每日生产总览' : '我的工作记录', '查看当天产量、工时和入库核对进度。', '') + `<div class="stats"><div class="stat"><small>已提交记录</small><strong>${rows.length} <small>份</small></strong><small>${manager ? '按员工每天一份统计' : '当前日期'}</small></div><div class="stat"><small>工作总金额</small><strong>${cash(total)}</strong><small>计件 + 计时</small></div><div class="stat"><small>总工时</small><strong>${minutes / 60}</strong><small>小时</small></div><div class="stat"><small>平均每小时产值</small><strong>${minutes ? cash(total * 60 / minutes) : '—'}</strong><small>总金额 ÷ 总工时</small></div></div><section class="card ${manager ? '' : 'employee-history'}"><div class="card-head"><h2>${manager ? '员工工作记录' : '我的工作记录'}</h2><small>${day} · ${rows.length} 份记录</small></div>${!manager ? `<div class="mobile-report-cards">${rows.map(r => reportCard(r) + `<button data-edit="${r.id}" class="record-edit">修正工作记录</button>`).join('')}</div>` : ''}${rows.length ? `<div class="table-wrap"><table><thead><tr><th>员工</th><th>计件数量</th><th>总工时</th><th>总金额</th><th>每小时产值</th><th>入库核对</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td><strong>${esc(r.name)}</strong><small>${r.pieces.length} 种产品 · ${r.timed.length} 项计时</small></td><td>${esc(r.pieces.map(p => `${p.quantity} ${p.unit}`).join(' + ') || '—')}</td><td>${r.minutes / 60} 小时</td><td>${cash(r.amount)}</td><td><strong>${cash(r.amount * 60 / r.minutes)}</strong></td><td>${badge(r.status)}</td><td><button data-detail="${r.id}" class="quiet">明细</button><button data-edit="${r.id}" class="quiet">修正</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">这一天还没有工作记录。<br>在「工作录入」中提交第一份记录。</div>'}</section>`); document.querySelectorAll('[data-detail]').forEach(b => b.onclick = () => showModal('工作明细', reportCard(rows.find(r => r.id === +b.dataset.detail)))); document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => { const r = rows.find(r => r.id === +b.dataset.edit); editReport(r) }) }
-function showModal(title, html) { modal.classList.remove('workflow-builder'); modal.innerHTML = `<div class="modal-title"><h2>${title}</h2><button class="quiet" id="close-modal" aria-label="关闭">×</button></div>${html}`; document.querySelector('#close-modal').onclick = () => modal.close(); modal.showModal() }
+function showModal(title, html) { modal.classList.remove('workflow-builder'); modal.innerHTML = `<div class="modal-title"><h2>${title}</h2><button class="quiet" id="close-modal" aria-label="关闭">×</button></div>${html}`; document.querySelector('#close-modal').onclick = () => modal.close(); modal.showModal(); queueMicrotask(enhanceLotPickers) }
 function formModal(title, fields, action, extra = {}) {
     showModal(title, `<form id="modal-form"><div class="form-grid">${fields}</div><div class="error" id="modal-error" role="alert"></div><div class="form-actions"><button class="primary" type="submit">保存</button></div></form>`);
     const form = document.querySelector('#modal-form'), error = form.querySelector('#modal-error');
@@ -205,6 +235,14 @@ function openSale(r) {
         + (r.sales_recorded ? field('修改原因', 'reason', '', 'text', 'maxlength="500" placeholder="填写原因"', '例如：新增直售 10 盒，累计改为 20 盒。') : ''),
         'direct_sale', { date: day, product_id: r.id, version: r.sales_version });
 }
+function reconciliationSummary(r) {
+ const issues=[];
+ if(r.process_check?.difference) issues.push(`分包与封膜相差 ${Math.abs(r.process_check.difference)} ${r.unit}，请核实员工记录。`);
+ if(r.actual!==null && r.sales_recorded && r.difference) issues.push(`实际入库比应入库${r.difference>0?'多':'少'} ${Math.abs(r.difference)} ${r.unit}，请核实点货和直售。`);
+ if(r.needs_recount) issues.push('员工报数已变化，请点货员复点后确认。');
+ if(r.missing_records?.length) issues.push('待补充：'+r.missing_records.join('、')+'。');
+ return `<div class="reconcile-overview ${r.status==='passed'?'is-passed':''}"><strong>${r.status==='passed'?'数量已核对一致':'需要处理'}</strong>${issues.length?`<ul>${issues.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:'<p>分包、封膜和生产去向已匹配。</p>'}<small>修改后自动核对；复点确认需要先核实实物。</small></div>`;
+}
 function intakeDetails(r) {
     const check = r.process_check;
     const people = list => list.map(c => `<div class="recheck-person"><span>${esc(c.name)} · ${c.quantity} ${esc(r.unit)}</span><button data-recheck-report="${c.report_id}">修改工作记录</button></div>`).join('') || '<p class="muted">尚未提交，请员工填写工作记录。</p>';
@@ -216,7 +254,7 @@ function intakeDetails(r) {
     };
     const recordQuantity = (quantity, empty) => quantity === null ? `<p class="record-empty">${empty}</p>` : `<p class="record-quantity"><strong>${quantity}</strong><span>${esc(r.unit)}</span></p>`;
     showModal('核对详情 · ' + esc(r.product), `<div class="intake-statuses">${intakeBadges(r)}</div>
-        <p class="hint">先核实差异来源，再修改对应记录。每次保存后系统自动核对；点货复核需要实际清点或核实实物。</p>
+        ${reconciliationSummary(r)}
         <section class="reconcile-section"><h3>① 工序核对</h3>${check ? `<p>分包 ${check.packed} ${check.difference === 0 ? '=' : '≠'} 封膜 ${check.sealed} ${esc(r.unit)}${check.difference ? ` · 相差 ${Math.abs(check.difference)} ${esc(r.unit)}` : check.packers.length && check.sealers.length ? ' · 数量一致' : ' · 工序记录尚未齐全'}</p>${check.target_ids.length > 1 || check.source_ids.length > 1 ? '<p class="muted">共用工序按关联组汇总，每道工序只计算一次。</p>' : ''}<h4>分包记录</h4>${people(check.packers)}<h4>封膜记录</h4>${people(check.sealers)}` : `<p class="muted">历史成品未关联分包工序，仅核对封膜报数与入库。</p><h4>封膜记录</h4>${people(r.contributors)}`}</section>
         <section class="reconcile-section"><h3>② 入库核对</h3>${!r.contributors.length ? '<p class="muted">封膜记录尚未提交，暂不能确定应入库数量。</p>' : r.sales_recorded ? `<p>封膜 ${r.expected} − 直售 ${r.direct_sold} = 应入库 ${r.expected_intake} ${esc(r.unit)}；实际入库 ${r.actual ?? '未填写'}${r.actual === null ? '' : ' ' + esc(r.unit)}。</p>${r.actual !== null ? `<p class="${r.difference ? 'reconcile-warning' : 'muted'}">${r.difference ? `实际入库${r.difference > 0 ? '多' : '少'} ${Math.abs(r.difference)} ${esc(r.unit)}` : '入库数量一致'}</p>` : ''}` : '<p class="muted">直售尚未登记，暂不能确定应入库数量。无直售请登记 0。</p>'}
         <div class="reconcile-record"><h4>直售记录</h4>${recordQuantity(r.sales_recorded ? r.direct_sold : null, '尚未登记')}${r.sales_recorded ? recordMeta(r.sales_recorder, r.sales_updated_at) + `<div class="record-memo"><span>售货说明</span><p>${esc(r.sales_memo || '—')}</p></div>` : ''}<div class="reconcile-actions"><button id="detail-sale">${r.sales_recorded ? '修改直售' : '登记直售'}</button></div></div>
@@ -230,10 +268,21 @@ function intakeDetails(r) {
     });
 }
 function inventory() {
-    const rows = state.inventory, manager = state.user.role === 'manager';
+    const manager = state.user.role === 'manager';
+    const priority = r => r.has_difference ? 0 : r.needs_recount || r.status === 'stale' ? 1 : r.status === 'passed' ? 3 : 2;
+    const rows = [...state.inventory].sort((a,b)=>priority(a)-priority(b)||a.product.localeCompare(b.product,'zh-CN',{numeric:true}));
     content(heading(manager ? '当天入库核对' : '当天入库点货', manager ? '分包 = 封膜；封膜 − 未入库直售 = 实际入库。保存后自动核对。' : '只清点当天累计实际入库的成品，不包含未入库直售，不填冷库剩余库存。')
         + (manager ? `<div class="stats"><div class="stat"><small>产品数</small><strong>${rows.length}</strong></div><div class="stat"><small>核对通过</small><strong>${rows.filter(r => r.status === 'passed').length}</strong></div><div class="stat"><small>存在差异</small><strong>${rows.filter(r => r.has_difference).length}</strong></div><div class="stat"><small>待提交 / 待复核</small><strong>${rows.filter(r => r.needs_recount || r.missing_records.length).length}</strong></div></div>` : '')
         + `<div class="intake-list intake-rows ${manager ? 'manager-intake' : 'checker-intake'}">${rows.map(r => `<section class="card intake-row"><div class="intake-identity"><small>成品 / ${esc(r.unit)}</small><h2>${esc(r.product)}</h2><div class="intake-statuses">${manager ? intakeBadges(r) : badge(r.status)}</div></div><div class="intake-metrics">${manager ? `<div><small>${r.process_check?.target_ids.length > 1 ? '关联组分包' : '完成分包'}</small><strong>${r.process_check?.packed ?? '—'}</strong></div><div><small>完成封膜</small><strong>${r.expected}</strong></div>` : ''}<div><small>实际入库</small><strong>${r.actual ?? '—'}</strong></div>${manager ? `<div><small>未入库直售</small><strong>${r.sales_recorded ? r.direct_sold : '未登记'}</strong></div><div><small>入库差额</small><strong class="${r.difference ? 'difference' : ''}">${r.actual === null || !r.sales_recorded ? '—' : r.difference > 0 ? '+' + r.difference : r.difference}</strong></div>` : ''}</div><div class="intake-actions">${manager ? `<button data-sale="${r.id}">${r.sales_recorded ? '修改直售' : '登记直售'}</button><button class="primary" data-contributors="${r.id}">核对详情</button>` : `<button class="primary" data-count="${r.id}">${r.actual === null ? '填写点货' : '修改点货数量'}</button>${r.status === 'stale' ? `<button data-confirm="${r.id}">已复点，数量不变</button>` : ''}`}</div><div class="intake-foot">${r.counter ? `${esc(r.counter)} · ${esc(new Date(r.updated_at).toLocaleString('zh-CN'))}` : '尚未提交点货记录'}${(manager ? r.needs_recount : r.status === 'stale') ? ' · 员工报数已变更，请重新核实实物' : ''}</div></section>`).join('') || '<div class="card empty">当天没有可点货的成品。</div>'}</div>`);
+    const list = document.querySelector('.intake-list');
+    const passed = rows.filter(r=>r.status==='passed');
+    if (passed.length) {
+        const group = document.createElement('details'); group.className='passed-group';
+        const summary = document.createElement('summary'); summary.textContent=`已完成 ${passed.length} 项 · 展开查看`; group.append(summary);
+        const cards = [...list.children];
+        rows.forEach((r,i)=>{if(r.status==='passed')group.append(cards[i])});
+        list.append(group);
+    }
     document.querySelectorAll('[data-count]').forEach(b => b.onclick = () => openCount(rows.find(r => r.id === +b.dataset.count)));
     document.querySelectorAll('[data-sale]').forEach(b => b.onclick = () => openSale(rows.find(r => r.id === +b.dataset.sale)));
     document.querySelectorAll('[data-contributors]').forEach(b => b.onclick = () => intakeDetails(rows.find(r => r.id === +b.dataset.contributors)));
@@ -270,6 +319,7 @@ function workflowBuilder(active) {
   el(key+'_name').hidden=existing;el(key+'_name').disabled=existing;el(key+'_id').hidden=!existing;el(key+'_id').disabled=!existing;el(key+'_id').required=existing;
   for(const field of ['unit','price']){const input=el(key+'_'+field);input.readOnly=existing;input.required=!existing;if(existing)input.value=p?(field==='price'?p.price/100:p.unit):'';}
   row.querySelector('.builder-preview').textContent=existing?(p?'引用：'+p.product+' · 已有记录保持不变':'仅列出同级、启用中的工序'):'显示名称：'+(el(key+'_name').value||'成品名称')+'·'+processNames[key];
+  enhanceLotPickers();
  };
  stages.forEach(([key,label,unit])=>{el(key+'_name').oninput=()=>{touched.add(key);update(key)};el(key+'_mode').onchange=()=>{if(el(key+'_mode').value==='existing'){newValues[key]={unit:el(key+'_unit').value,price:el(key+'_price').value}}else{el(key+'_unit').value=newValues[key]?.unit??unit;el(key+'_price').value=newValues[key]?.price??''}update(key)};el(key+'_id').onchange=()=>update(key);update(key)});
  el('name').oninput=()=>stages.forEach(([key])=>{if(!touched.has(key))el(key+'_name').value=el('name').value;update(key)});
@@ -277,22 +327,74 @@ function workflowBuilder(active) {
  form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type="submit"]');if(button.disabled)return;button.disabled=true;const steps={};stages.forEach(([key])=>{steps[key]=el(key+'_mode').value==='existing'?{mode:'existing',id:+el(key+'_id').value}:{mode:'new',name:el(key+'_name').value,unit:el(key+'_unit').value,price:el(key+'_price').value}});try{await api('workflow',{name:el('name').value,start_date:el('start_date').value,steps});modal.close();await refreshAfterSave('产品流程已创建')}catch(err){const error=document.querySelector('#workflow-error');if(error&&modal.open)error.textContent=err.message;else notify(err.message);button.disabled=false}};
 }
 function users() { content(heading('员工与时薪', '经理按员工设置计时工作的时薪。', '<button class="primary" id="add-user">＋ 添加账号</button>') + `<section class="card"><div class="table-wrap"><table><thead><tr><th>姓名</th><th>登录账号</th><th>角色</th><th>计时时薪</th><th></th></tr></thead><tbody>${state.users.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td>${esc(u.username)}</td><td>${u.role === 'manager' ? '经理' : u.role === 'checker' ? '点货员' : '员工'}</td><td>${cash(u.rate)} / 小时</td><td><button class="quiet" data-user="${u.id}">编辑</button></td></tr>`).join('')}</tbody></table></div></section>`); document.querySelector('#add-user').onclick = () => formModal('添加员工账号', field('姓名', 'name') + field('登录名', 'username') + field('初始密码', 'password', '', 'password', 'minlength="10" autocomplete="new-password"') + field('计时时薪（点货员填 0）', 'rate', '', 'number', 'min="0" step="0.01"') + '<label>角色<select name="role"><option value="employee">普通员工</option><option value="manager">经理</option><option value="checker">点货员</option></select></label>', 'user'); document.querySelectorAll('[data-user]').forEach(b => b.onclick = () => { const u = state.users.find(u => u.id === +b.dataset.user); formModal('编辑 ' + esc(u.name), field('姓名', 'name', u.name) + field('计时时薪', 'rate', u.rate / 100, 'number', 'min="0" step="0.01"') + '<label class="full">重设密码（留空则不修改）<input name="password" type="password" minlength="10" autocomplete="new-password"></label>', 'user', { id: u.id }) }) }
-function audit() {
-    const records = state.audit.map(a => ({ ...a, view: auditView(a, state) }));
-    content(heading('操作记录', '查看谁在什么时间修改了哪些内容，以及修改前后的差异。') + `<section class="card"><p class="muted">最近 100 次操作</p><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>操作人</th><th>操作内容</th><th></th></tr></thead><tbody>${records.map(a => `<tr><td>${esc(new Date(a.at).toLocaleString('zh-CN'))}</td><td>${esc(a.view.actor)}</td><td><strong>${esc(a.view.title)}</strong><small>${esc(a.view.subject)}</small></td><td><button class="quiet" data-audit="${a.id}">查看变更</button></td></tr>`).join('')}</tbody></table>${records.length ? '' : '<div class="empty">暂无操作记录</div>'}</div></section>`);
+let auditFilters = {start:'',end:'',actor:'',action:''}, auditPage=1, auditAnchor=null, auditRequest=0;
+async function audit(reuse = false) {
+    const request=++auditRequest, userId=state.user.id;
+    if (!reuse || !document.querySelector('#audit-filters')) {
+    auditPage=1;auditAnchor=null;
+    content(heading('操作记录','完整保留操作历史，按日期、操作人和类型查找。')+`<section class="card audit-card"><form id="audit-filters" class="audit-filters"><label>开始日期<input type="date" name="start" value="${esc(auditFilters.start)}"></label><label>结束日期<input type="date" name="end" value="${esc(auditFilters.end)}"></label><label>操作人<select name="actor" disabled><option>正在加载…</option></select></label><label>操作类型<select name="action" disabled><option>正在加载…</option></select></label></form><div class="audit-filter-note"><small>更改条件后自动更新</small><button type="button" class="quiet" id="audit-reset" hidden>清除筛选</button></div><p id="audit-error" class="error" role="alert"></p><div id="audit-results" aria-live="polite"></div></section>`);
+    }
+    const form=document.querySelector('#audit-filters');
+    const applyFilters=()=>{
+        ++auditRequest;
+        const values=Object.fromEntries(new FormData(form));
+        // Disabled selectors during initial loading must not erase existing filters.
+        for(const key of ['actor','action'])if(form.elements[key].disabled)values[key]=auditFilters[key]||'';
+        auditFilters=values;
+        document.querySelector('#audit-reset').hidden=!Object.values(values).some(Boolean);
+        if(!form.checkValidity() || (values.start&&values.end&&values.start>values.end)) {
+            document.querySelector('#audit-error').textContent='请选择有效日期，开始日期不能晚于结束日期';
+            document.querySelector('#audit-results').textContent='请调整日期范围后查看记录。';return;
+        }
+        auditPage=1;auditAnchor=null;audit(true);
+    };
+    form.onchange=applyFilters;
+    form.onsubmit=e=>{e.preventDefault();applyFilters()};
+    document.querySelector('#audit-reset').hidden=!Object.values(auditFilters).some(Boolean);
+    document.querySelector('#audit-reset').onclick=()=>{auditFilters={start:'',end:'',actor:'',action:''};for(const key of Object.keys(auditFilters))form.elements[key].value='';auditPage=1;auditAnchor=null;audit(true)};
+    document.querySelector('#audit-error').textContent='';
+    document.querySelector('#audit-results').textContent='正在更新记录…';
+    const query=new URLSearchParams({page:auditPage});
+    if(auditAnchor!==null)query.set('anchor',auditAnchor);
+    for(const key of ['actor','action'])if(auditFilters[key])query.set(key,auditFilters[key]);
+    // Convert local calendar boundaries independently so DST days have the correct length.
+    for(const key of ['start','end'])if(auditFilters[key]){const [y,m,d]=auditFilters[key].split('-').map(Number);query.set(key,new Date(y,m-1,d+(key==='end'?1:0)).toISOString())}
+    try {
+    const data=await api('audit?'+query);
+    if(request!==auditRequest||page!=='audit'||state?.user.id!==userId||!form.isConnected)return;
+    auditPage=data.page;auditAnchor=data.anchor;
+    form.elements.actor.innerHTML='<option value="">全部操作人</option>'+data.actors.map(u=>`<option value="${u.id}">${esc(u.name)}（${esc(u.username)}）</option>`).join('');
+    const labels={workflow:'创建产品流程',product:'添加产品 / 调整单价',product_delete:'停用产品',user:'账号与时薪',direct_sale:'直售登记 / 修改',intake_count:'点货登记 / 复点',process_link:'工序关联'};
+    form.elements.action.innerHTML='<option value="">全部操作类型</option>'+data.actions.map(action=>`<option value="${esc(action)}">${esc(labels[action]||action)}</option>`).join('');
+    for(const key of ['actor','action']){form.elements[key].value=auditFilters[key]||'';form.elements[key].disabled=false}
+    enhanceLotPickers();
+    const records=data.rows.map(a=>({...a,view:auditView(a,state)}));
+    document.querySelector('#audit-results').innerHTML=`<div class="audit-page-head"><span>共 ${data.total} 条 · 每页 50 条</span><small>最新操作在前</small></div><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>操作人</th><th>操作内容</th><th></th></tr></thead><tbody>${records.map(a=>`<tr><td>${esc(new Date(a.at).toLocaleString('zh-CN'))}</td><td>${esc(a.view.actor)}</td><td><strong>${esc(a.view.title)}</strong><small>${esc(a.view.subject)}</small></td><td><button class="quiet" data-audit="${a.id}">查看变更</button></td></tr>`).join('')}</tbody></table>${records.length?'':'<div class="empty">没有符合条件的操作记录，请调整筛选条件。</div>'}</div><div class="audit-pagination"><button id="audit-prev" ${data.page<=1?'disabled':''}>上一页</button><span>第 ${data.page} / ${data.pages} 页</span><button id="audit-next" ${data.page>=data.pages?'disabled':''}>下一页</button></div>`;
+    document.querySelector('#audit-prev').onclick=()=>{auditPage--;audit(true);document.querySelector('#audit-filters').scrollIntoView({block:'start'})};
+    document.querySelector('#audit-next').onclick=()=>{auditPage++;audit(true);document.querySelector('#audit-filters').scrollIntoView({block:'start'})};
     document.querySelectorAll('[data-audit]').forEach(b => b.onclick = () => {
         const a = records.find(a => a.id === +b.dataset.audit), v = a.view;
         showModal('操作详情', `<div class="audit-meta"><div><span>操作人</span><strong>${esc(v.actor)}</strong></div><div><span>操作时间</span><strong>${esc(new Date(a.at).toLocaleString('zh-CN'))}</strong></div><div><span>操作内容</span><strong>${esc(v.title)}</strong></div><div><span>操作对象</span><strong>${esc(v.subject)}</strong></div></div>${v.reason ? `<div class="hint audit-reason">修改原因：${esc(v.reason)}</div>` : ''}<div class="audit-changes"><table><thead><tr><th>修改项目</th><th>原来</th><th>现在</th></tr></thead><tbody>${v.rows.map(r => `<tr><td>${esc(r[0])}</td><td class="audit-before">${esc(r[1])}</td><td class="audit-after">${esc(r[2])}</td></tr>`).join('')}</tbody></table></div>${v.note ? `<p class="muted audit-note">${esc(v.note)}</p>` : ''}`);
     });
+    } catch(err) {if(request===auditRequest&&form.isConnected){document.querySelector('#audit-results').innerHTML='<button class="quiet" id="audit-retry">重新加载</button>';document.querySelector('#audit-retry').onclick=()=>audit(true);document.querySelector('#audit-error').textContent=err.message}}
 }
+
 (async () => { try { demo = (await api('config')).demo; await refresh(); page = state.user.role === 'manager' ? 'overview' : state.user.role === 'checker' ? 'inventory' : 'entry'; render() } catch (e) { if (!state) login(); else notify(e.message) } })();
 
 let exportMonth = localDate().slice(0, 7), exportKind = 'employees', exportRequest = 0;
+function monthlySummary(report,kind) {
+ const sum = name => report.rows.reduce((n,row)=>n+(Number(row[report.columns.indexOf(name)])||0),0);
+ const metric=(label,value)=>`<div><small>${esc(label)}</small><strong>${esc(value)}</strong></div>`;
+ if(kind==='employees') return `<div class="report-highlights">${metric('员工总产值',cash(Math.round(sum('总产值')*100)))}${metric('总工时',sum('总工时').toFixed(2)+' 小时')}${metric('待核对日报',sum('待核对日报数')+' 份')}</div>`;
+ const units=new Map(); const unitIndex=report.columns.indexOf('单位'), totalIndex=report.columns.indexOf('入库 + 直售（已填）');
+ report.rows.forEach(row=>{if(row[totalIndex]!=='')units.set(row[unitIndex],(units.get(row[unitIndex])||0)+Number(row[totalIndex]))});
+ return `<div class="report-highlights">${metric('已记录成品产量', [...units].map(([unit,total])=>total+' '+unit).join(' / ')||'—')}${metric('待核对产品',report.rows.filter(row=>row[report.columns.indexOf('核对状态')]!=='核对通过').length+' 项')}</div>`;
+}
 async function monthlyExports() {
     const request = ++exportRequest;
-    content(heading('月度导出', '选择月份，预览员工核算或产品产量，再下载 CSV。') + `<div class="export-layout"><aside class="card export-controls"><label>导出月份<input type="month" id="export-month" value="${exportMonth}" max="${localDate().slice(0, 7)}" required></label><div class="export-kind-field"><span id="export-kind-label">报表类型</span><div class="export-picker"><button type="button" id="export-kind" role="combobox" aria-labelledby="export-kind-label" aria-controls="export-options" aria-haspopup="listbox" aria-expanded="false"><span>${exportKind === 'employees' ? '员工月度核算' : '产品月度产量'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button><div id="export-options" role="listbox" aria-labelledby="export-kind-label" hidden>${[['employees', '员工月度核算'], ['products', '产品月度产量']].map(([value, label]) => `<button type="button" role="option" aria-selected="${exportKind === value}" data-export-kind="${value}">${label}<span aria-hidden="true">${exportKind === value ? '✓' : ''}</span></button>`).join('')}</div></div></div><button class="primary" id="monthly-download" disabled>下载完整报表</button><button id="monthly-reload">刷新预览</button></aside><section class="card export-preview" aria-live="polite"><div id="export-preview">正在加载月度数据…</div></section></div>`);
+    content(heading('月度导出', '选择月份，预览员工核算或产品产量，再下载 CSV。') + `<div class="export-layout"><aside class="card export-controls"><label>导出月份<input type="month" id="export-month" value="${exportMonth}" max="${localDate().slice(0, 7)}" required></label><label>报表类型<select id="export-kind"><option value="employees" ${exportKind==='employees'?'selected':''}>员工月度核算</option><option value="products" ${exportKind==='products'?'selected':''}>产品月度产量</option></select></label><button class="primary" id="monthly-download" disabled>下载完整报表</button><button id="monthly-reload">刷新预览</button></aside><section class="card export-preview" aria-live="polite"><div id="export-preview">正在加载月度数据…</div></section></div>`);
     document.querySelector('#export-month').onchange = e => { if (!e.target.reportValidity()) { e.target.value = exportMonth; e.target.setCustomValidity(''); notify('请选择有效月份，不能晚于本月'); return } exportMonth = e.target.value; monthlyExports() };
-    bindExportPicker();
+    document.querySelector('#export-kind').onchange=e=>{exportKind=e.target.value;monthlyExports()};
     document.querySelector('#monthly-reload').onclick = () => monthlyExports();
     const month = exportMonth, kind = exportKind;
     try {
@@ -300,7 +402,7 @@ async function monthlyExports() {
         if (request !== exportRequest || page !== 'exports') return;
         const drawPreview = () => {
             const selected = report.columns.map((_,i)=>i);
-            document.querySelector('#export-preview').innerHTML = `<div class="card-head"><h2>${esc(report.title)}</h2></div><p class="muted">${report.start} 至 ${report.end} · ${report.rows.length} 条记录${report.partial ? ' · 本月统计截至今天' : ''}</p><p class="report-definition">${kind === 'employees' ? '总产值 = 计件金额 + 计时金额；平均时产值 = 总产值 ÷ 总工时。' : '产量合计 = 实际入库 + 未入库直售，仅统计封膜成品。未完成点货时，合计可能不完整。'}</p><details class="export-note"><summary>统计口径与下载说明</summary><p>${esc(report.note)} 下载完整报表保留全部字段。</p></details>${report.rows.length ? `<div class="report-table" tabindex="0" role="region" aria-label="月度报表，宽度不足时可左右滑动"><table><thead><tr>${selected.map(i=>`<th scope="col">${esc(report.columns[i])}</th>`).join('')}</tr></thead><tbody>${report.rows.map(row=>`<tr>${selected.map(i=>`<td>${esc(row[i] === '' ? '—' : row[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<div class="empty">该月没有可导出的记录，请选择其他月份。</div>'}`;
+            document.querySelector('#export-preview').innerHTML = `<div class="card-head"><h2>${esc(report.title)}</h2></div><p class="muted">${report.start} 至 ${report.end} · ${report.rows.length} 条记录${report.partial ? ' · 本月统计截至今天' : ''}</p>${monthlySummary(report,kind)}<p class="report-definition">${kind === 'employees' ? '总产值 = 计件金额 + 计时金额；平均时产值 = 总产值 ÷ 总工时。' : '产量合计 = 实际入库 + 未入库直售，仅统计封膜成品。未完成点货时，合计可能不完整。'}</p><details class="export-note"><summary>统计口径与下载说明</summary><p>${esc(report.note)} 下载完整报表保留全部字段。</p></details>${report.rows.length ? `<div class="report-table" tabindex="0" role="region" aria-label="月度报表，宽度不足时可左右滑动"><table><thead><tr>${selected.map(i=>`<th scope="col">${esc(report.columns[i])}</th>`).join('')}</tr></thead><tbody>${report.rows.map(row=>`<tr>${selected.map(i=>`<td>${esc(row[i] === '' ? '—' : row[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<div class="empty">该月没有可导出的记录，请选择其他月份。</div>'}`;
 
         };
         drawPreview();
@@ -314,17 +416,7 @@ async function monthlyExports() {
     } catch (e) { const target = document.querySelector('#export-preview'); if (request === exportRequest && page === 'exports' && target) target.textContent = e.message }
 }
 
-let exportPickerController;
-function bindExportPicker() {
-    exportPickerController?.abort(); exportPickerController = new AbortController();
-    const trigger = document.querySelector('#export-kind'), list = document.querySelector('#export-options'), options = [...list.querySelectorAll('[role="option"]')];
-    const close = () => { list.hidden = true; trigger.setAttribute('aria-expanded', 'false') };
-    const open = () => { list.hidden = false; trigger.setAttribute('aria-expanded', 'true'); options.find(o => o.getAttribute('aria-selected') === 'true').focus() };
-    trigger.onclick = () => list.hidden ? open() : close();
-    trigger.onkeydown = e => { if (['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); open() } };
-    options.forEach((option, i) => { option.onclick = () => { exportKind = option.dataset.exportKind; monthlyExports(); document.querySelector('#export-kind').focus() }; option.onkeydown = e => { if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); const index = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length; options[index].focus() } if (e.key === 'Escape') { e.preventDefault(); close(); trigger.focus() } if (e.key === 'Tab') close() } });
-    document.addEventListener('pointerdown', e => { if (!trigger.parentElement.contains(e.target)) close() }, { signal: exportPickerController.signal });
-}
+
 
 function chineseValidation(input) {
     input.setCustomValidity('');

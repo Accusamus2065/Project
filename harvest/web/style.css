@@ -2247,7 +2247,7 @@ select:disabled{opacity:.6}.lot-chevron{width:8px;height:8px;margin-right:6px;fl
  .export-preview { padding:18px 12px; }
 }
 .builder-name { font-size:12px; font-weight:600; }
-.builder-name span { display:block; margin-bottom:8px; }
+.builder-name > span:not(.lot-picker) { display:block; margin-bottom:8px; }
 .builder-row [hidden] { display:none!important; }
 @media(min-width:761px) {
  .workflow-builder .modal-title { margin-bottom:14px; }
@@ -2280,7 +2280,7 @@ select:disabled{opacity:.6}.lot-chevron{width:8px;height:8px;margin-right:6px;fl
  .builder-row label { display:block; }
  .builder-row label input,.builder-row label select { margin-top:8px; }
  .builder-row .builder-mode select { margin-top:8px; }
- .builder-name span { margin-bottom:8px; }
+ .builder-name > span:not(.lot-picker) { margin-bottom:8px; }
  .builder-row input,.builder-row select { min-height:42px; }
  .builder-preview { line-height:1.3; }
 }
@@ -2371,4 +2371,70 @@ input::placeholder, textarea::placeholder { font-weight:400; }
 @media(max-width:480px) {
  .reconcile-record { padding:16px; }
  .record-meta { grid-template-columns:1fr; gap:10px; }
+}
+
+/* Focus the daily workflow on quantities and the next action. */
+.passed-group { border:1px solid var(--border); border-radius:14px; padding:18px; background:#f1f6ef; }
+.passed-group > summary { cursor:pointer; font-weight:600; color:#3d6650; padding:4px; }
+.passed-group .intake-row { margin-top:18px; }
+.reconcile-overview { margin-top:20px; padding:20px; border-radius:12px; background:#fff7e9; border-left:3px solid #ba872d; }
+.reconcile-overview > strong { font-size:18px; }
+.reconcile-overview ul { margin:12px 0; padding-left:20px; line-height:1.8; }
+.reconcile-overview small { color:var(--muted); line-height:1.6; }
+.reconcile-overview.is-passed { background:#edf7ee; border-color:#258047; }
+.report-highlights,.review-totals { display:flex; flex-wrap:wrap; gap:16px; margin:20px 0; }
+.report-highlights > div,.review-totals > div { flex:1 1 160px; padding:18px; border-radius:12px; background:#f2f6ef; min-width:0; }
+.report-highlights small,.review-totals small { display:block; color:var(--muted); font-size:13px; margin-bottom:8px; }
+.report-highlights strong,.review-totals strong { font-size:25px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.export-preview .report-table th:first-child,.export-preview .report-table td:first-child { position:sticky; left:0; z-index:1; background:#fff; box-shadow:2px 0 0 #e3e9e1; max-width:180px; white-space:normal; overflow-wrap:anywhere; min-width:100px; }
+.export-preview .report-table th:first-child { background:#f5f8f4; z-index:2; }
+.submit-review { list-style:none; padding:0; margin:16px 0; }
+.submit-review li { display:flex; justify-content:space-between; gap:16px; padding:12px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.submit-review strong { flex-shrink:0; }
+@media(max-width:760px) {
+ .report-highlights { gap:10px; }
+ .report-highlights > div { flex-basis:120px; padding:14px; }
+ .report-highlights strong { font-size:22px; }
+ .reconcile-overview { padding:16px; }
+ .passed-group { padding:12px; }
+ .mobile-submitbar > div { min-width:0; }
+ .mobile-submitbar strong { font-size:18px; }
+ .mobile-submitbar strong span { font-size:12px; }
+}
+
+.audit-filters { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; align-items:end; }
+.audit-filters > label { min-width:0; }
+.audit-filter-actions { grid-column:1/-1; display:flex; gap:10px; }
+.audit-page-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:var(--muted); margin:20px 0; }
+.audit-pagination { display:flex; align-items:center; justify-content:center; gap:18px; padding-top:20px; }
+.audit-pagination span { white-space:nowrap; font-size:14px; color:var(--muted); }
+@media(max-width:760px) { .audit-filters { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .audit-filter-actions button { flex:1; } .audit-pagination { gap:10px; } }
+@media(max-width:380px) { .audit-filters { grid-template-columns:1fr; } }
+
+.audit-filter-note { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:36px; margin-top:10px; color:var(--muted); }
+.audit-filter-note small { font-size:12px; }
+.audit-filter-note button { font-size:13px; padding:6px 0 6px 12px; min-height:36px; }
+.audit-filter-note button[hidden] { display:none; }
+.audit-card #audit-error:empty { display:none; }
+.audit-card .audit-page-head { margin:14px 0; }
+
+/* One accessible picker for every ordinary select; date/month inputs remain native. */
+.picker-native { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:0!important; opacity:0; clip-path:inset(50%); pointer-events:none; }
+.lot-picker[hidden] { display:none!important; }
+.lot-picker { min-width:0; width:100%; }
+.standard-picker { grid-column:auto; grid-row:auto; }
+.lot-trigger:disabled { opacity:.55; cursor:default; }
+.lot-trigger { font-size:inherit; }
+.builder-row,.builder-steps { overflow:visible; }
+.lot-picker:has(.lot-trigger[aria-expanded="true"]) { z-index:60; }
+.lot-menu { max-height:min(260px,40vh); overflow-y:auto; overscroll-behavior:contain; }
+.lot-trigger,.lot-menu { font-size:14px; font-weight:400; }
+
+/* Keep native text inputs and enhanced selectors in the same workflow slots. */
+.builder-row > * { min-width:0; }
+.builder-name .lot-picker { margin:0; }
+.builder-row .lot-trigger { height:46px; min-height:46px; padding:10px; }
+@media(min-width:761px) {
+ .builder-row .lot-trigger { height:42px; min-height:42px; }
+ .builder-row label > .lot-picker { margin-top:8px; }
 }

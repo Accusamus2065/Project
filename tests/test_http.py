@@ -100,4 +100,15 @@ class HTTPWorkflow(unittest.TestCase):
         for _ in range(10):self.assertEqual(self.request('/api/login',{'username':'missing','password':'wrongPassword'})[0],401)
         self.assertEqual(self.request('/api/login',{'username':'missing','password':'wrongPassword'})[0],429)
 
+    def test_audit_history_manager_only(self):
+        self.assertEqual(self.request('/api/audit')[0],401)
+        for name in ('worker','counter'):
+            cookie,_=self.login(name)
+            self.assertEqual(self.request('/api/audit',cookie=cookie)[0],400)
+        cookie,_=self.login('boss')
+        status,body,_=self.request('/api/audit?page=1',cookie=cookie)
+        self.assertEqual(status,200)
+        self.assertEqual(json.loads(body)['page_size'],50)
+        self.assertEqual(self.request('/api/audit?page=bad',cookie=cookie)[0],400)
+
 if __name__=='__main__':unittest.main()
