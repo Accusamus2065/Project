@@ -1,0 +1,345 @@
+'use strict';
+const app = document.querySelector('#app'), modal = document.querySelector('#modal');
+let state, demo = false, page = 'entry', draft = null;
+const dayDrafts = new Map();
+let dateRequest = 0;
+const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` };
+let day = localDate();
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const cash = n => new Intl.NumberFormat('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n / 100);
+const statusNames = { passed: '核对通过', pending: '待点货', mismatch: '数量有差异', stale: '需重新核对', na: '无需核对', recorded: '已提交' };
+const badge = s => `<span class="badge ${esc(s)}">${statusNames[s] || esc(s)}</span>`;
+function notify(message) { const n = document.querySelector('#notice'); n.textContent = message; n.classList.add('show'); clearTimeout(notify.timer); notify.timer = setTimeout(() => n.classList.remove('show'), 4500) }
+async function api(path, data) { const res = await fetch('/api/' + path, { method: data ? 'POST' : 'GET', headers: data ? { 'Content-Type': 'application/json', 'X-CSRF-Token': state?.csrf || '' } : {}, body: data ? JSON.stringify(data) : undefined }).catch(() => { throw new Error('网络连接失败，请检查网络后重试') }); const value = await res.json().catch(() => { throw new Error('服务器返回异常，请刷新后重试') }); if (!res.ok) { if (res.status === 401 && path !== 'login') { state = null; draft = null; dayDrafts.clear(); dateRequest++; modal.close(); login() } throw new Error(value.error || '请求失败') } return value }
+async function refresh() {
+ const requestedDay = day, request = ++dateRequest, userId = state?.user.id;
+ const nextState = await api('state?date=' + requestedDay);
+ if (request !== dateRequest || day !== requestedDay || state?.user.id !== userId) return;
+ state = nextState; render();
+}
+async function refreshAfterSave(message) { try { await refresh(); notify(message) } catch (err) { render(); notify(message + '，但页面刷新失败：' + err.message) } }
+function login() { app.innerHTML = `<div class="login"><aside class="login-aside"><div class="brand"><img src="/nebo-logo.webp" alt="NEBO Mushrooms"></div><h1>员工生产工作台</h1><p>每天的产量、工时与入库，<br>在这里清晰记录。</p><div class="login-rule">生产记录 &nbsp; / &nbsp; 工时管理 &nbsp; / &nbsp; 入库核对</div></aside><main class="login-main"><form class="login-box" id="login-form"><div class="eyebrow">员工登录</div><h1>欢迎回来</h1><p class="muted">登录账号，开始今天的工作。</p><label>账号<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required ${demo ? 'value="manager"' : ''}></label><label>密码<input name="password" type="password" autocomplete="current-password" required ${demo ? 'value="Harvest2026!"' : ''}></label><div class="error" id="login-error" role="alert"></div><button class="primary">登录工作台 →</button>${demo ? '<div class="hint">本地演示 · 不含真实业务数据<br>经理：manager / 员工：employee / 点货员：checker<br>演示密码：Harvest2026!</div>' : ''}</form></main></div>`; document.querySelector('#login-form').onsubmit = async e => { e.preventDefault(); const b = e.target.querySelector('button'); b.disabled = true; try { await api('login', Object.fromEntries(new FormData(e.target))); await refresh(); page = state.user.role === 'manager' ? 'overview' : state.user.role === 'checker' ? 'inventory' : 'entry'; draft = null; render() } catch (err) { document.querySelector('#login-error').textContent = err.message } finally { b.disabled = false } } }
+const navItems = [['entry', '＋', '工作录入'], ['overview', '▦', '每日总览'], ['inventory', '▤', '入库核对'], ['lots', '▧', '产品与单价'], ['users', '♙', '员工管理'], ['exports', '↓', '月度导出'], ['audit', '≡', '操作记录']];
+function navIcon(id) {
+    const paths = { entry: '<path d="M12 5v14M5 12h14"/>', overview: '<path d="M4 19V5M4 19h16M9 15v-4M14 15V7M19 15v-7"/>', inventory: '<path d="m3 7 9-4 9 4v10l-9 4-9-4Z M3 7l9 4 9-4M12 11v10"/>', lots: '<path d="M3 11V4h7l11 11-7 7Z"/><circle cx="7.5" cy="8" r="1"/>', users: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/>', exports: '<path d="M12 3v15m-6-6 6 6 6-6M5 21h14"/>', audit: '<path d="M7 3h10v4H7zM7 5H4v16h16V5h-3M8 12h8M8 16h6"/>' };
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[id]}</svg>`;
+}
+function render() {
+    if (!state) return login(); const manager = state.user.role === 'manager', checker = state.user.role === 'checker'; if (checker) page = 'inventory'; app.innerHTML = `<div class="app"><aside class="sidebar"><div class="brand"><img src="/nebo-logo.webp" alt="NEBO Mushrooms"><div>NEBO<small>MUSHROOMS</small></div></div><div class="navlabel">工作空间</div><nav class="nav">${navItems.filter(([id]) => manager || (checker ? id === 'inventory' : ['entry', 'overview'].includes(id))).map(([id, icon, label]) => `<button data-page="${id}" class="${page === id ? 'active' : ''}"><span class="nav-icon" aria-hidden="true">${navIcon(id)}</span>${id === 'entry' && draft?.version ? '修改工作记录' : !manager && id === 'overview' ? '我的记录' : label}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="identity"><span class="avatar">${esc(state.user.name.slice(-1))}</span><div><strong>${esc(state.user.name)}</strong><small>${manager ? '经理' : checker ? '点货员' : '员工'} · 已登录</small></div></div></div></aside><div class="workspace"><header class="topbar"><span>生产管理 &nbsp; / &nbsp; ${esc(page === 'entry' && draft?.version ? '修改工作记录' : navItems.find(n => n[0] === page)?.[2])}</span><div class="toolbar">${demo ? '<span class="demo-tag">本地演示</span>' : ''}<button class="quiet" id="logout">退出登录</button></div></header><main class="content" id="content"></main></div></div>`;
+    document.querySelectorAll('[data-page]').forEach(b => b.onclick = () => { captureDraft(); page = b.dataset.page; render() }); document.querySelector('#logout').onclick = async () => { try { await api('logout', {}); state = null; draft = null; dayDrafts.clear(); dateRequest++; login() } catch (e) { notify(e.message) } };
+    ({ entry: entry, overview: overview, inventory: inventory, lots: lots, users: users, exports: monthlyExports, audit: audit })[page]();
+    bindDate();
+}
+function bindDate() {
+ const input = document.querySelector('#work-date');
+ if (input) input.onchange = async () => {
+  if (!input.value || !input.reportValidity()) { input.value = day; input.setCustomValidity(''); notify('请选择有效的工作日期，不能晚于今天'); return }
+  const nextDay = input.value;
+  if (nextDay === day) return;
+  captureDraft();
+  if (draft) dayDrafts.set(day, draft);
+  const request = ++dateRequest, userId = state.user.id;
+  input.disabled = true;
+  try { const nextState = await api('state?date=' + encodeURIComponent(nextDay)); if (request !== dateRequest || state?.user.id !== userId) return; day = nextDay; draft = dayDrafts.get(day) || null; state = nextState; render() }
+  catch (e) { input.value = day; input.disabled = false; notify(e.message) }
+ };
+}
+function heading(title, subtitle, action = '') { return `<div class="heading"><div><div class="eyebrow">${state.user.role === 'manager' ? 'NEBO / 经理工作台' : state.user.role === 'checker' ? 'NEBO / 当天点货' : 'NEBO / 我的工作'}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="date-control">${['users', 'lots', 'audit', 'exports'].includes(page) ? '' : `<input aria-label="工作日期" id="work-date" type="date" value="${day}" max="${localDate()}">`}${action}</div></div>` }
+const content = html => document.querySelector('#content').innerHTML = html;
+const processNames={harvest:'采摘',pack:'分包',seal:'封膜'};
+const stageName=p=>processNames[p.process]||'历史项目';
+const productLabel=p=>`${p.product}（${p.unit}）`;
+const stageBadge=p=>'';
+const lotOptions = (id, unique = false) => `<option value="">选择产品</option>` + state.products.filter(l => l.start_date <= day && (!l.deleted || (unique && draft?.version && draft.prices?.[l.id] != null)) && (!unique || Number(id) === l.id || !draft.pieces.some(p => Number(p.product_id) === l.id))).map(l => `<option value="${l.id}" ${Number(id) === l.id ? 'selected' : ''}>${esc(productLabel(l))}</option>`).join('');
+// Keep the native select as the form value; render an anchored, keyboard-accessible picker.
+let closeLotPicker = null;
+let lotPickerSequence = 0;
+function enhanceLotPickers() {
+    document.querySelectorAll('.piece-data select').forEach(select => {
+        const wrapper = document.createElement('span'); wrapper.className = 'lot-picker';
+        select.before(wrapper); wrapper.append(select); select.hidden = true; select.tabIndex = -1;
+        const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'lot-trigger';
+        trigger.setAttribute('role', 'combobox'); trigger.setAttribute('aria-haspopup', 'listbox');
+        trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-required', 'true');
+        trigger.setAttribute('aria-label', select.getAttribute('aria-label'));
+        const label = document.createElement('span'); label.className = 'lot-trigger-label'; trigger.append(label);
+        const arrow = document.createElement('span'); arrow.className = 'lot-chevron'; arrow.setAttribute('aria-hidden', 'true'); trigger.append(arrow);
+        const list = document.createElement('div'); list.className = 'lot-menu'; list.id = 'lot-menu-' + (++lotPickerSequence);
+        list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', select.getAttribute('aria-label')); list.hidden = true;
+        trigger.setAttribute('aria-controls', list.id); wrapper.append(trigger, list);
+        const choices = Array.from(select.options).filter(option => option.value);
+        let active = -1, open = false, search = '', searchAt = 0;
+        const options = choices.map((choice, index) => {
+            const item = document.createElement('div'); item.className = 'lot-option'; item.id = list.id + '-' + index;
+            item.setAttribute('role', 'option'); item.textContent = choice.textContent;
+            item.onpointerdown = e => e.preventDefault();
+            item.onclick = () => choose(index); list.append(item); return item;
+        });
+        if (!choices.length) { const empty = document.createElement('div'); empty.className = 'lot-empty'; empty.textContent = '暂无可选产品，请联系经理或检查是否已添加'; list.append(empty) }
+        function sync() { label.textContent = select.selectedOptions[0]?.textContent || '选择产品'; trigger.classList.toggle('placeholder', !select.value); options.forEach((o, i) => o.setAttribute('aria-selected', String(choices[i].value === select.value))) }
+        function highlight(index) { active = index; options.forEach((o, i) => o.classList.toggle('active', i === active)); if (options[active]) { trigger.setAttribute('aria-activedescendant', options[active].id); options[active].scrollIntoView({ block: 'nearest' }) } }
+        function close() { open = false; list.hidden = true; trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-activedescendant'); if (closeLotPicker === close) closeLotPicker = null }
+        function show() { if (open) return; closeLotPicker?.(); open = true; list.hidden = false; trigger.setAttribute('aria-expanded', 'true'); closeLotPicker = close; highlight(Math.max(0, choices.findIndex(o => o.value === select.value))) }
+        function choose(index) { if (!choices[index]) return; select.value = choices[index].value; trigger.removeAttribute('aria-invalid'); sync(); close(); trigger.focus(); select.dispatchEvent(new Event('change', { bubbles: true })); const rowIndex = [...document.querySelectorAll('.piece-data select')].indexOf(select); entry(); document.querySelectorAll('.lot-trigger')[rowIndex]?.focus() }
+        trigger.onclick = () => open ? close() : show();
+        trigger.onkeydown = e => {
+            if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); close(); return }
+            if (e.key === 'Tab') { close(); return }
+            if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+                e.preventDefault(); if (!open) { show(); if (e.key === 'Home') highlight(0); if (e.key === 'End') highlight(options.length - 1) }
+                else highlight(e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : Math.max(0, Math.min(options.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1)))); return;
+            }
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (open) choose(active); else show(); return }
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); const now = Date.now(); search = (now - searchAt > 700 ? '' : search) + e.key.toLowerCase(); searchAt = now; show(); const i = choices.findIndex(o => o.textContent.toLowerCase().startsWith(search)); if (i >= 0) highlight(i) }
+        };
+        wrapper.addEventListener('focusout', e => { if (!wrapper.contains(e.relatedTarget)) close() });
+        select.addEventListener('invalid', e => { e.preventDefault(); trigger.setAttribute('aria-invalid', 'true'); trigger.focus(); show(); notify('请选择产品') });
+        sync();
+    });
+}
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.lot-picker')) closeLotPicker?.() });
+function newDraft() { return { user_id: state.user.id, hours: '', pieces: [], timed: [] } }
+function captureDraft() { const form = document.querySelector('#entry-form'); if (!form) return; draft = { ...draft, hours: form.elements.hours.value, pieces: [...form.querySelectorAll('.piece-data')].map((row, i) => ({ product_id: Number(row.querySelector('select').value) || '', snapshot_id: draft.pieces[i]?.product_id === Number(row.querySelector('select').value) ? draft.pieces[i]?.snapshot_id : undefined, quantity: row.querySelector('input').value })), timed: [...form.querySelectorAll('.time-data')].map(row => ({ hours: row.querySelector('input[type="number"]').value, memo: row.querySelector('input[type="text"]').value })), reason: form.elements.reason?.value || '' } }
+function entry() {
+    const existing = state.reports.find(r => r.user_id === state.user.id); if (!draft && existing) { content(heading('今天的记录已提交', '金额按提交时的单价计算。你可以在工作记录中修正填写内容。') + reportCard(existing) + `<button id="see-reports" class="primary">查看工作记录</button>`); document.querySelector('#see-reports').onclick = () => { page = 'overview'; render() }; return } draft = draft || newDraft(); const employee = state.users.find(u => u.id === draft.user_id) || state.user; const rate = draft.rate ?? employee.rate;
+    content(heading(draft.version ? '修改工作记录' : '记录今天的工作', `${esc(employee.name)} · 当天总工时包含计件工作和计时工作。`) + `<div class="grid"><form id="entry-form"><section class="card"><div class="card-head"><div><h2><span class="step">01</span>计件工作</h2><p>选择今天完成的采摘、分包或封膜项目，按对应单位填写数量。</p></div><small>按产品单价计算</small></div>${draft.pieces.length ? '<div class="piece-row row-head"><span>产品 / 规格</span><span>数量</span><span class="amount">金额</span><span></span></div>' : ''}${draft.pieces.map((p, i) => { const l = state.products.find(l => l.id === Number(p.product_id)); return `<div class="piece-row piece-data"><span class="mobile-piece-title">计件项目 ${i + 1}</span><div><select aria-label="第 ${i + 1} 项产品" required>${lotOptions(p.product_id, true)}</select><small class="lot-rate">${l ? `${cash(draft.snapshotPrices?.[p.snapshot_id] ?? draft.prices?.[l.id] ?? l.price)} / ${esc(l.unit)}` : '请选择产品'}</small></div><label class="piece-quantity"><span class="mobile-field-label">数量</span><input aria-label="第 ${i + 1} 项数量" inputmode="numeric" type="number" min="1" max="10000000" step="1" value="${esc(p.quantity)}" required></label><span class="amount line-amount">0.00</span><button class="remove" type="button" data-remove-piece="${i}" aria-label="移除计件项">×</button></div>` }).join('')}<button class="add" type="button" id="add-piece" aria-label="添加计件工作">＋ 添加</button></section><section class="card"><div class="card-head"><div><h2><span class="step">02</span>计时工作</h2><p>例如接种、上包；没有计时工作可跳过。</p></div><small>${cash(rate)} / 小时</small></div>${draft.timed.map((t, i) => `<div class="time-row time-data"><label>小时数<input type="number" inputmode="decimal" min="0.05" max="24" step="0.05" value="${esc(t.hours)}" required></label><label><span id="time-label-${i}">工作备注</span><input aria-labelledby="time-label-${i}" type="text" maxlength="500" placeholder="例如：接种、上包。" value="${esc(t.memo)}" required></label><button class="remove" type="button" data-remove-time="${i}" aria-label="移除计时项">×</button></div>`).join('')}<button class="add" type="button" id="add-time" aria-label="添加计时工作">＋ 添加</button></section><section class="card"><h2><span class="step">03</span>当天总工时</h2><div class="hours-equation"><label>计件工时（小时）<input name="hours" type="number" inputmode="decimal" min="0" max="24" step="0.05"  value="${esc(draft.hours)}"></label><span class="hours-plus" aria-hidden="true">＋</span><div class="hours-auto"><span>计时工时（自动汇总）</span><output id="timed-hours" aria-live="polite">0 小时</output></div></div><div class="hours-result">当天总工时 <output id="total-hours" aria-live="polite">0 小时</output></div><div class="hint">只填写计件工作的时长，上方计时工作自动相加。仅做计时工作时可留空。</div>${draft.version ? `<label class="full">修改原因<input name="reason" maxlength="500" value="${esc(draft.reason)}" required placeholder="填写原因"></label>` : ''}<div id="entry-error" class="error" role="alert"></div></section></form><aside class="card summary" id="entry-summary" tabindex="-1"><div class="summary-label">当天工作产值</div><div class="big-money" id="sum-total">0.00</div><dl><div><dt>计件金额</dt><dd id="sum-pieces">0.00</dd></div><div><dt>计时金额</dt><dd id="sum-time">0.00</dd></div><div><dt>总工时</dt><dd id="sum-hours">—</dd></div></dl><hr><div class="summary-label">平均每小时产值</div><div class="efficiency"><strong id="sum-efficiency">—</strong><small>/ 小时</small></div><div class="summary-result" id="sum-reference"></div><div class="summary-actions"><button class="primary" type="submit" form="entry-form">${draft.version ? '保存修正' : '提交今日记录'} →</button>${draft.version ? '<button class="summary-secondary" type="button" id="cancel-edit">取消修改</button>' : ''}</div><p class="summary-note">${draft.version ? '原有产品和计时工作保留提交时价格。' : '提交后保存当时单价。入库核对结果可在工作记录中查看。'}</p></aside><div class="mobile-submitbar"><div><small>当天产值 / 每小时</small><strong id="mobile-total">0.00 <span> / —</span></strong></div><button type="button" class="primary" id="review-summary">查看汇总 ↓</button></div></div>`);
+    document.querySelector('#add-piece').onclick = () => { captureDraft(); draft.pieces.push({ product_id: '', quantity: '' }); entry(); document.querySelector('.piece-data:last-of-type .lot-trigger')?.focus() }; document.querySelector('#add-time').onclick = () => { captureDraft(); draft.timed.push({ hours: '', memo: '' }); entry(); document.querySelector('.time-data:last-of-type input')?.focus() }; document.querySelectorAll('[data-remove-piece]').forEach(b => b.onclick = () => { captureDraft(); draft.pieces.splice(+b.dataset.removePiece, 1); entry() }); document.querySelectorAll('[data-remove-time]').forEach(b => b.onclick = () => { captureDraft(); draft.timed.splice(+b.dataset.removeTime, 1); entry() }); document.querySelector('#cancel-edit')?.addEventListener('click', () => { dayDrafts.delete(day); draft = null; page = 'overview'; render() });
+    const form = document.querySelector('#entry-form'); form.oninput = form.onchange = () => { document.querySelector('#entry-error').textContent = ''; calculate() }; form.onsubmit = saveWorkRecord; document.querySelector('#review-summary').onclick = () => { const summary = document.querySelector('#entry-summary'); summary.scrollIntoView({ block: 'start', behavior: 'smooth' }); summary.focus({ preventScroll: true }) }; enhanceLotPickers(); calculate(); bindDate();
+}
+
+async function saveWorkRecord(e) {
+ e.preventDefault();
+ const form = e.currentTarget;
+ if (form.dataset.saving) return;
+ captureDraft();
+ const savedDay = day, userId = state.user.id, submitted = { ...draft };
+ const button = document.querySelector('button[form="entry-form"]');
+ form.dataset.saving = 'true'; button.disabled = true;
+ try {
+  await api('report', { ...submitted, piece_hours: submitted.hours || 0, date: savedDay });
+  if (state?.user.id !== userId) return;
+  dayDrafts.delete(savedDay);
+  if (day !== savedDay || (draft && draft.user_id !== submitted.user_id)) {
+   notify(savedDay + ' 的工作记录已保存'); return;
+  }
+  draft = null; page = 'overview'; await refreshAfterSave('工作记录已保存');
+ } catch (err) {
+  const error = form.isConnected ? form.querySelector('#entry-error') : null;
+  if (error) { error.textContent = err.message; error.scrollIntoView({ block: 'center', behavior: 'smooth' }) }
+  else notify(err.message);
+ } finally { delete form.dataset.saving; button.disabled = false; }
+}
+
+function validInputNumber(input) { return input && input.value !== '' && input.validity.valid && Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : 0 }
+function calculate() { captureDraft(); let pieces = 0; document.querySelectorAll('.piece-data').forEach((row, i) => { const p = draft.pieces[i], lot = state.products.find(l => l.id === +p.product_id), price = lot ? (draft.snapshotPrices?.[p.snapshot_id] ?? draft.prices?.[lot.id] ?? lot.price) : 0; const amount = price * validInputNumber(row.querySelector('input[type=number]')); pieces += amount; row.querySelector('.line-amount').textContent = cash(amount); row.querySelector('.lot-rate').textContent = lot ? `${cash(price)} / ${lot.unit}` : '请选择产品' }); const user = state.users.find(u => u.id === draft.user_id) || state.user, rate = draft.rate ?? user.rate; const timedMinutes = [...document.querySelectorAll('.time-data input[type=number]')].reduce((a, input) => a + Math.round(validInputNumber(input) * 60), 0); const time = Math.round(timedMinutes * rate / 60); const total = pieces + time, hours = (Math.round(validInputNumber(document.querySelector('#entry-form [name=hours]')) * 60) + timedMinutes) / 60; document.querySelector('#timed-hours').textContent = `${Number((timedMinutes / 60).toFixed(2))} 小时`; document.querySelector('#total-hours').textContent = `${Number(hours.toFixed(2))} 小时`; document.querySelector('#sum-total').textContent = cash(total); document.querySelector('#sum-pieces').textContent = cash(pieces); document.querySelector('#sum-time').textContent = cash(time); document.querySelector('#sum-hours').textContent = hours ? `${Number(hours.toFixed(2))} 小时` : '—'; document.querySelector('#sum-efficiency').textContent = hours ? cash(total / hours) : '—'; document.querySelector('#mobile-total').innerHTML = `${cash(total)} <span>/ ${hours ? cash(total / hours) : '—'}</span>`; document.querySelector('#sum-reference').textContent = hours ? `个人计时时薪参考：${cash(rate)} / 小时` : '' }
+function sortedReportPieces(pieces) {
+    const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+    const order = { harvest: 0, pack: 1, seal: 2 };
+    const key = p => {
+        const base = p.product.replace(/·(?:采摘|分包|分装|封膜|封装)$/, '').trim();
+        // Keep different package sizes of the same mushroom next to one another.
+        const mushroom = base.replace(/^\d+(?:\.\d+)?\s*(?:kg|g|lbs?|oz|公斤|千克|克|磅)\s*/i, '').trim();
+        return { base, mushroom, stage: order[p.process] ?? 3 };
+    };
+    return [...pieces].sort((a, b) => {
+        const x = key(a), y = key(b);
+        return collator.compare(x.mushroom, y.mushroom)
+            || collator.compare(x.base, y.base) || x.stage - y.stage;
+    });
+}
+function reportCard(r) { return `<div class="card"><div class="card-head"><h2>${esc(r.name)} · ${esc(r.date)}</h2>${badge(r.status)}</div><div class="detail-list">${sortedReportPieces(r.pieces).map(p => `<div>${esc(p.product)} ${stageBadge(p)} &nbsp; ${p.quantity} ${esc(p.unit)} × ${cash(p.price)} = <strong>${cash(p.quantity * p.price)}</strong></div>`).join('')}${r.timed.map(t => `<div>${esc(t.memo)} &nbsp; ${t.minutes / 60} 小时 × ${cash(r.rate)}</div>`).join('')}<hr>总工时 ${r.minutes / 60} 小时 · 总金额 <strong>${cash(r.amount)}</strong> · 每小时产值 <strong>${cash(r.amount * 60 / r.minutes)}</strong></div></div>` }
+function editReport(r) { draft = { user_id: r.user_id, hours: (r.minutes - r.timed.reduce((sum, t) => sum + t.minutes, 0)) / 60, rate: r.rate, version: r.version, snapshotPrices: Object.fromEntries(r.pieces.map(p => [p.snapshot_id, p.price])), prices: Object.fromEntries(r.pieces.map(p => [p.product_id, p.price])), pieces: r.pieces.map(p => ({ ...p })), timed: r.timed.map(t => ({ hours: t.minutes / 60, memo: t.memo })), reason: '' }; page = 'entry'; render() }
+function overview() { const rows = state.reports, total = rows.reduce((a, r) => a + r.amount, 0), minutes = rows.reduce((a, r) => a + r.minutes, 0), manager = state.user.role === 'manager'; content(heading(manager ? '每日生产总览' : '我的工作记录', '查看当天产量、工时和入库核对进度。', '') + `<div class="stats"><div class="stat"><small>已提交记录</small><strong>${rows.length} <small>份</small></strong><small>${manager ? '按员工每天一份统计' : '当前日期'}</small></div><div class="stat"><small>工作总金额</small><strong>${cash(total)}</strong><small>计件 + 计时</small></div><div class="stat"><small>总工时</small><strong>${minutes / 60}</strong><small>小时</small></div><div class="stat"><small>平均每小时产值</small><strong>${minutes ? cash(total * 60 / minutes) : '—'}</strong><small>总金额 ÷ 总工时</small></div></div><section class="card ${manager ? '' : 'employee-history'}"><div class="card-head"><h2>${manager ? '员工工作记录' : '我的工作记录'}</h2><small>${day} · ${rows.length} 份记录</small></div>${!manager ? `<div class="mobile-report-cards">${rows.map(r => reportCard(r) + `<button data-edit="${r.id}" class="record-edit">修正工作记录</button>`).join('')}</div>` : ''}${rows.length ? `<div class="table-wrap"><table><thead><tr><th>员工</th><th>计件数量</th><th>总工时</th><th>总金额</th><th>每小时产值</th><th>入库核对</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td><strong>${esc(r.name)}</strong><small>${r.pieces.length} 种产品 · ${r.timed.length} 项计时</small></td><td>${esc(r.pieces.map(p => `${p.quantity} ${p.unit}`).join(' + ') || '—')}</td><td>${r.minutes / 60} 小时</td><td>${cash(r.amount)}</td><td><strong>${cash(r.amount * 60 / r.minutes)}</strong></td><td>${badge(r.status)}</td><td><button data-detail="${r.id}" class="quiet">明细</button><button data-edit="${r.id}" class="quiet">修正</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">这一天还没有工作记录。<br>在「工作录入」中提交第一份记录。</div>'}</section>`); document.querySelectorAll('[data-detail]').forEach(b => b.onclick = () => showModal('工作明细', reportCard(rows.find(r => r.id === +b.dataset.detail)))); document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => { const r = rows.find(r => r.id === +b.dataset.edit); editReport(r) }) }
+function showModal(title, html) { modal.classList.remove('workflow-builder'); modal.innerHTML = `<div class="modal-title"><h2>${title}</h2><button class="quiet" id="close-modal" aria-label="关闭">×</button></div>${html}`; document.querySelector('#close-modal').onclick = () => modal.close(); modal.showModal() }
+function formModal(title, fields, action, extra = {}) {
+    showModal(title, `<form id="modal-form"><div class="form-grid">${fields}</div><div class="error" id="modal-error" role="alert"></div><div class="form-actions"><button class="primary" type="submit">保存</button></div></form>`);
+    const form = document.querySelector('#modal-form'), error = form.querySelector('#modal-error');
+    let saving = false;
+    form.onsubmit = async e => {
+        e.preventDefault();
+        const button = form.querySelector('[type=submit]');
+        if (saving || button.disabled) return;
+        saving = true; button.disabled = true;
+        try { await api(action, { ...Object.fromEntries(new FormData(form)), ...extra }) }
+        catch (err) {
+            if (form.isConnected && modal.open) error.textContent = err.message;
+            else notify(err.message);
+            saving = false; button.disabled = false; return;
+        }
+        if (form.isConnected) modal.close();
+        try { await refresh(); notify('已保存') }
+        catch (err) { notify('已保存，但页面刷新失败：' + err.message) }
+    };
+}
+const field = (label, name, value = '', type = 'text', attrs = '', help = '') => `<label><span id="label-${name}">${label}</span><input aria-labelledby="label-${name}" name="${name}" type="${type}" value="${esc(value)}" ${attrs} ${help ? `aria-describedby="hint-${name}"` : ''} required>${help ? `<small class="field-help" id="hint-${name}">${esc(help)}</small>` : ''}</label>`;
+function processPanel() {
+    const checks = state.process_checks || [];
+    if (!checks.length) return '';
+    return `<details class="card process-summary"><summary>当天分包 → 封膜核对 <span>${checks.filter(r=>r.status==='passed').length} 组匹配 · ${checks.filter(r=>r.status==='mismatch').length} 组有差异</span></summary><p class="muted">当天分包合计与封膜合计应一致；共用工序按关联组汇总，每个工序只计算一次。差额 = 封膜 − 分包，收工后应为 0。实际数量仍需独立点货。</p><div class="process-checks">${checks.map(r => `<article class="process-check"><div class="card-head"><div><h3>${esc(r.source)} → ${esc(r.target)}</h3><small>${day} · ${esc(r.unit)}</small></div><span class="badge ${r.status}">${r.status === 'pending' ? '尚无报数' : r.status === 'passed' ? '工序匹配' : '工序不匹配'}</span></div><p>分包 <strong>${r.packed}</strong> · 封膜 <strong>${r.sealed}</strong> · 差额 <strong>${r.difference > 0 ? '+' : ''}${r.difference}</strong> ${esc(r.unit)}</p><details><summary>查看两道工序的员工明细</summary><p>分包：${r.packers.map(c => `${esc(c.name)} ${c.quantity} ${esc(r.unit)}`).join(' + ') || '尚无报数'}</p><p>封膜负责人：${r.sealers.map(c => `${esc(c.name)} ${c.quantity} ${esc(r.unit)}`).join(' + ') || '尚无报数'}</p></details></article>`).join('')}</div></details>`;
+}
+function intakeBadges(r) {
+    const labels = [];
+    if (r.has_difference) labels.push(badge('mismatch'));
+    if (r.needs_recount) labels.push('<span class="badge stale">待复核</span>');
+    if (r.missing_records?.length) labels.push(`<span class="badge pending">待提交：${esc(r.missing_records.join('、'))}</span>`);
+    return labels.join(' ') || badge(r.status);
+}
+function openCount(r) {
+    formModal((r.actual === null ? '填写点货' : '修改点货数量') + ' · ' + esc(r.product),
+        `<p class="hint full">${day} · 只填当天累计实际入库数量，不填晚上剩余库存，不包含未入库直售。没有入库请填 0。</p>`
+        + field('当天实际入库数量（' + esc(r.unit) + '）', 'actual', r.actual ?? '', 'number', 'min="0" max="10000000" step="1" inputmode="numeric"')
+        + (r.actual !== null ? field('修改原因', 'reason', '', 'text', 'maxlength="500" placeholder="填写原因"', '请先核实实物，再说明数量调整的原因。') : ''),
+        'intake_count', { date: day, product_id: r.id, version: r.version, signature: r.signature });
+}
+function confirmCount(r) {
+    formModal('确认复点 · ' + esc(r.product), `<p class="hint full">请先重新清点或核实实物。此次确认当天实际入库仍为 <strong>${r.actual} ${esc(r.unit)}</strong>。这会记录复核人和时间；若数字仍不一致，数量差异会继续显示。</p>`
+        + field('复核说明', 'reason', '', 'text', 'maxlength="500" placeholder="填写说明"', '例如：已重新清点，原数量正确。'),
+        'intake_count', { date: day, product_id: r.id, version: r.version, signature: r.signature, confirm_unchanged: true });
+    document.querySelector('#modal-form [type=submit]').textContent = '已复点，数量不变';
+}
+function openSale(r) {
+    formModal((r.sales_recorded ? '修改直售' : '登记直售') + ' · ' + esc(r.product),
+        `<p class="hint full">${day} · 只登记当天生产、直接售出且从未入库的成品。填写当天累计数量，不是本次新增数量。没有直售也请登记 0。${r.sales_recorded ? '保存后将替换原记录，请说明修改原因。' : '首次登记不需要修改原因。'}</p>`
+        + field('当天未入库直售（' + esc(r.unit) + '）', 'quantity', r.sales_recorded ? r.direct_sold : '', 'number', 'min="0" max="10000000" step="1" inputmode="numeric"')
+        + field('售货说明', 'memo', r.sales_memo, 'text', 'maxlength="500" placeholder="填写说明"', '例如：售货人、时间、单据号；无直售填“无”。')
+        + (r.sales_recorded ? field('修改原因', 'reason', '', 'text', 'maxlength="500" placeholder="填写原因"', '例如：新增直售 10 盒，累计改为 20 盒。') : ''),
+        'direct_sale', { date: day, product_id: r.id, version: r.sales_version });
+}
+function intakeDetails(r) {
+    const check = r.process_check;
+    const people = list => list.map(c => `<div class="recheck-person"><span>${esc(c.name)} · ${c.quantity} ${esc(r.unit)}</span><button data-recheck-report="${c.report_id}">修改工作记录</button></div>`).join('') || '<p class="muted">尚未提交，请员工填写工作记录。</p>';
+    const recordMeta = (person, value) => {
+        const stamp = value ? new Date(value) : null;
+        const dateText = stamp ? stamp.toLocaleDateString('zh-CN') : '—';
+        const timeText = stamp ? stamp.toLocaleTimeString('zh-CN', { hour12:false }) : '';
+        return `<dl class="record-meta"><div><dt>操作人</dt><dd>${esc(person || '—')}</dd></div><div><dt>更新时间</dt><dd class="record-timestamp"><span>${esc(dateText)}</span><span>${esc(timeText)}</span></dd></div></dl>`;
+    };
+    const recordQuantity = (quantity, empty) => quantity === null ? `<p class="record-empty">${empty}</p>` : `<p class="record-quantity"><strong>${quantity}</strong><span>${esc(r.unit)}</span></p>`;
+    showModal('核对详情 · ' + esc(r.product), `<div class="intake-statuses">${intakeBadges(r)}</div>
+        <p class="hint">先核实差异来源，再修改对应记录。每次保存后系统自动核对；点货复核需要实际清点或核实实物。</p>
+        <section class="reconcile-section"><h3>① 工序核对</h3>${check ? `<p>分包 ${check.packed} ${check.difference === 0 ? '=' : '≠'} 封膜 ${check.sealed} ${esc(r.unit)}${check.difference ? ` · 相差 ${Math.abs(check.difference)} ${esc(r.unit)}` : check.packers.length && check.sealers.length ? ' · 数量一致' : ' · 工序记录尚未齐全'}</p>${check.target_ids.length > 1 || check.source_ids.length > 1 ? '<p class="muted">共用工序按关联组汇总，每道工序只计算一次。</p>' : ''}<h4>分包记录</h4>${people(check.packers)}<h4>封膜记录</h4>${people(check.sealers)}` : `<p class="muted">历史成品未关联分包工序，仅核对封膜报数与入库。</p><h4>封膜记录</h4>${people(r.contributors)}`}</section>
+        <section class="reconcile-section"><h3>② 入库核对</h3>${!r.contributors.length ? '<p class="muted">封膜记录尚未提交，暂不能确定应入库数量。</p>' : r.sales_recorded ? `<p>封膜 ${r.expected} − 直售 ${r.direct_sold} = 应入库 ${r.expected_intake} ${esc(r.unit)}；实际入库 ${r.actual ?? '未填写'}${r.actual === null ? '' : ' ' + esc(r.unit)}。</p>${r.actual !== null ? `<p class="${r.difference ? 'reconcile-warning' : 'muted'}">${r.difference ? `实际入库${r.difference > 0 ? '多' : '少'} ${Math.abs(r.difference)} ${esc(r.unit)}` : '入库数量一致'}</p>` : ''}` : '<p class="muted">直售尚未登记，暂不能确定应入库数量。无直售请登记 0。</p>'}
+        <div class="reconcile-record"><h4>直售记录</h4>${recordQuantity(r.sales_recorded ? r.direct_sold : null, '尚未登记')}${r.sales_recorded ? recordMeta(r.sales_recorder, r.sales_updated_at) + `<div class="record-memo"><span>售货说明</span><p>${esc(r.sales_memo || '—')}</p></div>` : ''}<div class="reconcile-actions"><button id="detail-sale">${r.sales_recorded ? '修改直售' : '登记直售'}</button></div></div>
+        <div class="reconcile-record"><h4>点货记录</h4>${recordQuantity(r.actual, '尚未提交')}${r.actual !== null ? recordMeta(r.counter, r.updated_at) : ''}${r.needs_recount ? '<p class="record-alert">待复核：员工报数已变更，请重新核实点货数量。</p>' : ''}<div class="reconcile-actions"><button id="detail-count">${r.actual === null ? '填写点货' : '修改点货数量'}</button>${r.needs_recount ? '<button class="primary" id="detail-confirm">已复点，数量不变</button>' : ''}</div></div></section>`);
+    document.querySelector('#detail-count').onclick = () => openCount(r);
+    document.querySelector('#detail-sale').onclick = () => openSale(r);
+    document.querySelector('#detail-confirm')?.addEventListener('click', () => confirmCount(r));
+    document.querySelectorAll('[data-recheck-report]').forEach(button => button.onclick = () => {
+        const report = state.reports.find(x => x.id === +button.dataset.recheckReport);
+        if (report) { modal.close(); editReport(report) } else notify('记录已变化，请刷新页面');
+    });
+}
+function inventory() {
+    const rows = state.inventory, manager = state.user.role === 'manager';
+    content(heading(manager ? '当天入库核对' : '当天入库点货', manager ? '分包 = 封膜；封膜 − 未入库直售 = 实际入库。保存后自动核对。' : '只清点当天累计实际入库的成品，不包含未入库直售，不填冷库剩余库存。')
+        + (manager ? `<div class="stats"><div class="stat"><small>产品数</small><strong>${rows.length}</strong></div><div class="stat"><small>核对通过</small><strong>${rows.filter(r => r.status === 'passed').length}</strong></div><div class="stat"><small>存在差异</small><strong>${rows.filter(r => r.has_difference).length}</strong></div><div class="stat"><small>待提交 / 待复核</small><strong>${rows.filter(r => r.needs_recount || r.missing_records.length).length}</strong></div></div>` : '')
+        + `<div class="intake-list intake-rows ${manager ? 'manager-intake' : 'checker-intake'}">${rows.map(r => `<section class="card intake-row"><div class="intake-identity"><small>成品 / ${esc(r.unit)}</small><h2>${esc(r.product)}</h2><div class="intake-statuses">${manager ? intakeBadges(r) : badge(r.status)}</div></div><div class="intake-metrics">${manager ? `<div><small>${r.process_check?.target_ids.length > 1 ? '关联组分包' : '完成分包'}</small><strong>${r.process_check?.packed ?? '—'}</strong></div><div><small>完成封膜</small><strong>${r.expected}</strong></div>` : ''}<div><small>实际入库</small><strong>${r.actual ?? '—'}</strong></div>${manager ? `<div><small>未入库直售</small><strong>${r.sales_recorded ? r.direct_sold : '未登记'}</strong></div><div><small>入库差额</small><strong class="${r.difference ? 'difference' : ''}">${r.actual === null || !r.sales_recorded ? '—' : r.difference > 0 ? '+' + r.difference : r.difference}</strong></div>` : ''}</div><div class="intake-actions">${manager ? `<button data-sale="${r.id}">${r.sales_recorded ? '修改直售' : '登记直售'}</button><button class="primary" data-contributors="${r.id}">核对详情</button>` : `<button class="primary" data-count="${r.id}">${r.actual === null ? '填写点货' : '修改点货数量'}</button>${r.status === 'stale' ? `<button data-confirm="${r.id}">已复点，数量不变</button>` : ''}`}</div><div class="intake-foot">${r.counter ? `${esc(r.counter)} · ${esc(new Date(r.updated_at).toLocaleString('zh-CN'))}` : '尚未提交点货记录'}${(manager ? r.needs_recount : r.status === 'stale') ? ' · 员工报数已变更，请重新核实实物' : ''}</div></section>`).join('') || '<div class="card empty">当天没有可点货的成品。</div>'}</div>`);
+    document.querySelectorAll('[data-count]').forEach(b => b.onclick = () => openCount(rows.find(r => r.id === +b.dataset.count)));
+    document.querySelectorAll('[data-sale]').forEach(b => b.onclick = () => openSale(rows.find(r => r.id === +b.dataset.sale)));
+    document.querySelectorAll('[data-contributors]').forEach(b => b.onclick = () => intakeDetails(rows.find(r => r.id === +b.dataset.contributors)));
+    document.querySelectorAll('[data-confirm]').forEach(b => b.onclick = () => confirmCount(rows.find(r => r.id === +b.dataset.confirm)));
+}
+function lots() {
+ const all=state.products,active=all.filter(p=>!p.deleted),inactive=all.filter(p=>p.deleted);
+ const stepCard=p=>`<article class="workflow-step"><small>${esc(stageName(p))}${p.deleted?' · 已停用':''}</small><h3>${esc(p.product)}</h3><p><strong>${cash(p.price)}</strong> / ${esc(p.unit)}</p><small>启用：${esc(p.start_date)}</small>${p.parent_id?`<small>上道：${esc(all.find(x=>x.id===p.parent_id)?.product||'历史项目')}</small>`:''}${!p.deleted?`<div class="intake-actions"><button data-price="${p.id}">调整单价</button><button class="danger" data-product-delete="${p.id}">停用</button></div>`:''}</article>`;
+ const root=p=>{let r=p;const seen=new Set();while(r.parent_id&&!seen.has(r.id)){seen.add(r.id);const parent=all.find(x=>x.id===r.parent_id);if(!parent)break;r=parent}return r};
+ const groups=new Map();active.filter(p=>p.family_name).forEach(p=>{const r=root(p);if(!groups.has(r.id))groups.set(r.id,{root:r,items:[]});groups.get(r.id).items.push(p)});
+ const order={harvest:0,pack:1,seal:2};
+ const workflows=state.workflows||[], referenced=new Set(workflows.flatMap(w=>[w.harvest_id,w.pack_id,w.seal_id]));
+ const workflowHTML=workflows.filter(w=>[w.harvest_id,w.pack_id,w.seal_id].some(id=>active.some(p=>p.id===id))).map(w=>`<section class="card"><div class="card-head"><div><small>产品工序流程</small><h2>${esc(w.name)}</h2></div><small>采摘 → 分包 → 封膜</small></div><div class="workflow-steps">${[w.harvest_id,w.pack_id,w.seal_id].map(id=>{const p=all.find(p=>p.id===id);const uses=workflows.filter(w=>[w.harvest_id,w.pack_id,w.seal_id].includes(id)).length;return `${uses>1?`<div class="shared-step"><span class="shared-label">共用 · ${uses} 个流程共用</span>${stepCard(p)}</div>`:stepCard(p)}`}).join('')}</div></section>`).join('');
+
+ content(heading('产品与计件单价','按采摘 → 分包 → 封膜建立流程，三道工序分别计件。','<button class="primary" id="add-product">＋ 添加产品</button>')+
+ workflowHTML+[...groups.values()].map(g=>({...g,items:g.items.filter(p=>!referenced.has(p.id))})).filter(g=>g.items.length).map(g=>`<section class="card"><div class="card-head"><h2>${esc(g.root.family_name)}</h2><small>${g.items.length===3?'三道工序已齐全':'流程未齐全或有工序已停用'}</small></div><div class="workflow-steps">${g.items.sort((a,b)=>order[a.process]-order[b.process]).map(stepCard).join('')}</div></section>`).join('')+
+ (active.some(p=>!p.family_name)?`<section class="card"><h2>历史项目</h2><p class="muted">原记录与单价保留。旧项目缺少完整采摘来源，不自动猜测关联；新流程请从采摘开始创建。</p><div class="workflow-steps">${active.filter(p=>!p.family_name).map(stepCard).join('')}</div></section>`:'')+
+ (!active.length?'<section class="card empty">添加一个产品，一次设置三道工序。</section>':'')+
+ `<details class="card archived-products"><summary>已停用项目（${inactive.length}）</summary><div class="workflow-steps">${inactive.map(stepCard).join('')||'<p class="muted">暂无已停用项目。</p>'}</div></details>`);
+ document.querySelector('#add-product').onclick=()=>workflowBuilder(active);
+ document.querySelectorAll('[data-price]').forEach(b=>b.onclick=()=>{const p=all.find(p=>p.id===+b.dataset.price);formModal('调整 '+esc(p.product)+' 单价',field('计件单价（/'+esc(p.unit)+'）','price',p.price/100,'number','min="0" step="0.01"'),'product',{id:p.id})});
+ document.querySelectorAll('[data-product-delete]').forEach(b=>b.onclick=()=>{
+  const p=all.find(p=>p.id===+b.dataset.productDelete);
+  formModal('确认停用产品',`<p class="full">确定要停用「<strong>${esc(p.product)}</strong>」吗？停用后不能用于新录入，历史记录和已保存单价保留。请先停用后续工序。</p>`+field('请输入完整项目名称以确认','confirm_name','','text','autocomplete="off"')+'<p class="hint full">需输入：'+esc(p.product)+'</p>','product_delete',{id:p.id});
+  const form=document.querySelector('#modal-form'),save=form.querySelector('button');save.textContent='确认停用';save.classList.add('danger');save.disabled=true;form.elements.confirm_name.oninput=e=>{save.disabled=e.target.value!==p.product};const cancel=document.createElement('button');cancel.type='button';cancel.textContent='取消';cancel.onclick=()=>modal.close();form.querySelector('.form-actions').prepend(cancel);
+ });
+}
+function workflowBuilder(active) {
+ const stages=[['harvest','采摘','筐'],['pack','分包','盒'],['seal','封膜','盒']];
+ showModal('添加产品与三道工序',`<form id="workflow-form"><div class="builder-intro">先填写成品名称，再设置各道工序。共用工序只记录一次工作量。</div><div class="builder-top">${field('成品名称','name','','text','placeholder="成品名称" maxlength="80"', '例如：3lb 香菇。')}${field('启用日期','start_date',localDate(),'date',`max="${localDate()}"`)}</div><div class="builder-steps">${stages.map(([key,label,unit],i)=>`<section class="builder-row" data-stage="${key}"><div class="builder-stage"><span>0${i+1}</span><strong>${label}</strong></div><label class="builder-mode">设置方式<select name="${key}_mode"><option value="new">新建工序</option><option value="existing">选择已有工序</option></select></label><div class="builder-name"><span>名称</span><input aria-label="${label}名称" name="${key}_name" placeholder="工序名称" maxlength="80" required><select aria-label="选择已有${label}" name="${key}_id" hidden disabled><option value="">请选择${label}</option>${active.filter(p=>p.process===key).map(p=>`<option value="${p.id}">${esc(p.product)} · ${esc(p.unit)}</option>`).join('')}</select></div><label>单位<input name="${key}_unit" value="${unit}" maxlength="12" required></label><label>计件单价<input name="${key}_price" type="number" min="0" step="0.01" inputmode="decimal" required></label><small class="builder-preview"></small></section>`).join('')}</div><p class="hint">分包与封膜使用相同单位，按当天合计核对。选择已有工序会引用原名称、单位和单价；共用工序不会重复计算绩效或产量。</p><div id="workflow-error" class="error" role="alert"></div><div class="form-actions"><button type="button" id="builder-cancel">取消</button><button class="primary" type="submit">创建完整流程</button></div></form>`);
+ modal.classList.add('workflow-builder');
+ const form=document.querySelector('#workflow-form'), el=name=>form.elements.namedItem(name), touched=new Set(), newValues={};
+ const update=key=>{for (const suffix of ['name','id','unit','price']) el(key+'_'+suffix).setCustomValidity('');const existing=el(key+'_mode').value==='existing', row=form.querySelector(`[data-stage="${key}"]`), p=active.find(p=>p.id===+el(key+'_id').value);
+  el(key+'_name').hidden=existing;el(key+'_name').disabled=existing;el(key+'_id').hidden=!existing;el(key+'_id').disabled=!existing;el(key+'_id').required=existing;
+  for(const field of ['unit','price']){const input=el(key+'_'+field);input.readOnly=existing;input.required=!existing;if(existing)input.value=p?(field==='price'?p.price/100:p.unit):'';}
+  row.querySelector('.builder-preview').textContent=existing?(p?'引用：'+p.product+' · 已有记录保持不变':'仅列出同级、启用中的工序'):'显示名称：'+(el(key+'_name').value||'成品名称')+'·'+processNames[key];
+ };
+ stages.forEach(([key,label,unit])=>{el(key+'_name').oninput=()=>{touched.add(key);update(key)};el(key+'_mode').onchange=()=>{if(el(key+'_mode').value==='existing'){newValues[key]={unit:el(key+'_unit').value,price:el(key+'_price').value}}else{el(key+'_unit').value=newValues[key]?.unit??unit;el(key+'_price').value=newValues[key]?.price??''}update(key)};el(key+'_id').onchange=()=>update(key);update(key)});
+ el('name').oninput=()=>stages.forEach(([key])=>{if(!touched.has(key))el(key+'_name').value=el('name').value;update(key)});
+ document.querySelector('#builder-cancel').onclick=()=>modal.close();
+ form.onsubmit=async e=>{e.preventDefault();const button=form.querySelector('[type="submit"]');if(button.disabled)return;button.disabled=true;const steps={};stages.forEach(([key])=>{steps[key]=el(key+'_mode').value==='existing'?{mode:'existing',id:+el(key+'_id').value}:{mode:'new',name:el(key+'_name').value,unit:el(key+'_unit').value,price:el(key+'_price').value}});try{await api('workflow',{name:el('name').value,start_date:el('start_date').value,steps});modal.close();await refreshAfterSave('产品流程已创建')}catch(err){const error=document.querySelector('#workflow-error');if(error&&modal.open)error.textContent=err.message;else notify(err.message);button.disabled=false}};
+}
+function users() { content(heading('员工与时薪', '经理按员工设置计时工作的时薪。', '<button class="primary" id="add-user">＋ 添加账号</button>') + `<section class="card"><div class="table-wrap"><table><thead><tr><th>姓名</th><th>登录账号</th><th>角色</th><th>计时时薪</th><th></th></tr></thead><tbody>${state.users.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td>${esc(u.username)}</td><td>${u.role === 'manager' ? '经理' : u.role === 'checker' ? '点货员' : '员工'}</td><td>${cash(u.rate)} / 小时</td><td><button class="quiet" data-user="${u.id}">编辑</button></td></tr>`).join('')}</tbody></table></div></section>`); document.querySelector('#add-user').onclick = () => formModal('添加员工账号', field('姓名', 'name') + field('登录名', 'username') + field('初始密码', 'password', '', 'password', 'minlength="10" autocomplete="new-password"') + field('计时时薪（点货员填 0）', 'rate', '', 'number', 'min="0" step="0.01"') + '<label>角色<select name="role"><option value="employee">普通员工</option><option value="manager">经理</option><option value="checker">点货员</option></select></label>', 'user'); document.querySelectorAll('[data-user]').forEach(b => b.onclick = () => { const u = state.users.find(u => u.id === +b.dataset.user); formModal('编辑 ' + esc(u.name), field('姓名', 'name', u.name) + field('计时时薪', 'rate', u.rate / 100, 'number', 'min="0" step="0.01"') + '<label class="full">重设密码（留空则不修改）<input name="password" type="password" minlength="10" autocomplete="new-password"></label>', 'user', { id: u.id }) }) }
+function audit() {
+    const records = state.audit.map(a => ({ ...a, view: auditView(a, state) }));
+    content(heading('操作记录', '查看谁在什么时间修改了哪些内容，以及修改前后的差异。') + `<section class="card"><p class="muted">最近 100 次操作</p><div class="table-wrap"><table><thead><tr><th>操作时间</th><th>操作人</th><th>操作内容</th><th></th></tr></thead><tbody>${records.map(a => `<tr><td>${esc(new Date(a.at).toLocaleString('zh-CN'))}</td><td>${esc(a.view.actor)}</td><td><strong>${esc(a.view.title)}</strong><small>${esc(a.view.subject)}</small></td><td><button class="quiet" data-audit="${a.id}">查看变更</button></td></tr>`).join('')}</tbody></table>${records.length ? '' : '<div class="empty">暂无操作记录</div>'}</div></section>`);
+    document.querySelectorAll('[data-audit]').forEach(b => b.onclick = () => {
+        const a = records.find(a => a.id === +b.dataset.audit), v = a.view;
+        showModal('操作详情', `<div class="audit-meta"><div><span>操作人</span><strong>${esc(v.actor)}</strong></div><div><span>操作时间</span><strong>${esc(new Date(a.at).toLocaleString('zh-CN'))}</strong></div><div><span>操作内容</span><strong>${esc(v.title)}</strong></div><div><span>操作对象</span><strong>${esc(v.subject)}</strong></div></div>${v.reason ? `<div class="hint audit-reason">修改原因：${esc(v.reason)}</div>` : ''}<div class="audit-changes"><table><thead><tr><th>修改项目</th><th>原来</th><th>现在</th></tr></thead><tbody>${v.rows.map(r => `<tr><td>${esc(r[0])}</td><td class="audit-before">${esc(r[1])}</td><td class="audit-after">${esc(r[2])}</td></tr>`).join('')}</tbody></table></div>${v.note ? `<p class="muted audit-note">${esc(v.note)}</p>` : ''}`);
+    });
+}
+(async () => { try { demo = (await api('config')).demo; await refresh(); page = state.user.role === 'manager' ? 'overview' : state.user.role === 'checker' ? 'inventory' : 'entry'; render() } catch (e) { if (!state) login(); else notify(e.message) } })();
+
+let exportMonth = localDate().slice(0, 7), exportKind = 'employees', exportRequest = 0;
+async function monthlyExports() {
+    const request = ++exportRequest;
+    content(heading('月度导出', '选择月份，预览员工核算或产品产量，再下载 CSV。') + `<div class="export-layout"><aside class="card export-controls"><label>导出月份<input type="month" id="export-month" value="${exportMonth}" max="${localDate().slice(0, 7)}" required></label><div class="export-kind-field"><span id="export-kind-label">报表类型</span><div class="export-picker"><button type="button" id="export-kind" role="combobox" aria-labelledby="export-kind-label" aria-controls="export-options" aria-haspopup="listbox" aria-expanded="false"><span>${exportKind === 'employees' ? '员工月度核算' : '产品月度产量'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button><div id="export-options" role="listbox" aria-labelledby="export-kind-label" hidden>${[['employees', '员工月度核算'], ['products', '产品月度产量']].map(([value, label]) => `<button type="button" role="option" aria-selected="${exportKind === value}" data-export-kind="${value}">${label}<span aria-hidden="true">${exportKind === value ? '✓' : ''}</span></button>`).join('')}</div></div></div><button class="primary" id="monthly-download" disabled>下载完整报表</button><button id="monthly-reload">刷新预览</button></aside><section class="card export-preview" aria-live="polite"><div id="export-preview">正在加载月度数据…</div></section></div>`);
+    document.querySelector('#export-month').onchange = e => { if (!e.target.reportValidity()) { e.target.value = exportMonth; e.target.setCustomValidity(''); notify('请选择有效月份，不能晚于本月'); return } exportMonth = e.target.value; monthlyExports() };
+    bindExportPicker();
+    document.querySelector('#monthly-reload').onclick = () => monthlyExports();
+    const month = exportMonth, kind = exportKind;
+    try {
+        const report = await api('monthly?month=' + encodeURIComponent(month) + '&kind=' + kind);
+        if (request !== exportRequest || page !== 'exports') return;
+        const drawPreview = () => {
+            const selected = report.columns.map((_,i)=>i);
+            document.querySelector('#export-preview').innerHTML = `<div class="card-head"><h2>${esc(report.title)}</h2></div><p class="muted">${report.start} 至 ${report.end} · ${report.rows.length} 条记录${report.partial ? ' · 本月统计截至今天' : ''}</p><p class="report-definition">${kind === 'employees' ? '总产值 = 计件金额 + 计时金额；平均时产值 = 总产值 ÷ 总工时。' : '产量合计 = 实际入库 + 未入库直售，仅统计封膜成品。未完成点货时，合计可能不完整。'}</p><details class="export-note"><summary>统计口径与下载说明</summary><p>${esc(report.note)} 下载完整报表保留全部字段。</p></details>${report.rows.length ? `<div class="report-table" tabindex="0" role="region" aria-label="月度报表，宽度不足时可左右滑动"><table><thead><tr>${selected.map(i=>`<th scope="col">${esc(report.columns[i])}</th>`).join('')}</tr></thead><tbody>${report.rows.map(row=>`<tr>${selected.map(i=>`<td>${esc(row[i] === '' ? '—' : row[i])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<div class="empty">该月没有可导出的记录，请选择其他月份。</div>'}`;
+
+        };
+        drawPreview();
+        const button = document.querySelector('#monthly-download'); button.disabled = !report.rows.length;
+        button.onclick = () => {
+            const safe = v => typeof v === 'string' && /^[\s]*[=+\-@\t\r]/.test(v) ? "'" + v : v;
+            const cell = v => '"' + String(safe(v)).replace(/"/g, '""') + '"';
+            const csv = '\ufeff' + [report.columns, ...report.rows].map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
+            const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' })), a = document.createElement('a'); a.href = url; a.download = report.title + '-' + report.month + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+    } catch (e) { const target = document.querySelector('#export-preview'); if (request === exportRequest && page === 'exports' && target) target.textContent = e.message }
+}
+
+let exportPickerController;
+function bindExportPicker() {
+    exportPickerController?.abort(); exportPickerController = new AbortController();
+    const trigger = document.querySelector('#export-kind'), list = document.querySelector('#export-options'), options = [...list.querySelectorAll('[role="option"]')];
+    const close = () => { list.hidden = true; trigger.setAttribute('aria-expanded', 'false') };
+    const open = () => { list.hidden = false; trigger.setAttribute('aria-expanded', 'true'); options.find(o => o.getAttribute('aria-selected') === 'true').focus() };
+    trigger.onclick = () => list.hidden ? open() : close();
+    trigger.onkeydown = e => { if (['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); open() } };
+    options.forEach((option, i) => { option.onclick = () => { exportKind = option.dataset.exportKind; monthlyExports(); document.querySelector('#export-kind').focus() }; option.onkeydown = e => { if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); const index = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length; options[index].focus() } if (e.key === 'Escape') { e.preventDefault(); close(); trigger.focus() } if (e.key === 'Tab') close() } });
+    document.addEventListener('pointerdown', e => { if (!trigger.parentElement.contains(e.target)) close() }, { signal: exportPickerController.signal });
+}
+
+function chineseValidation(input) {
+    input.setCustomValidity('');
+    const v = input.validity;
+    if (v.valid) return;
+    let message = '请检查填写内容';
+    if (v.valueMissing) message = input.tagName === 'SELECT' ? '请选择一项' : '请填写此项';
+    else if (v.badInput || v.typeMismatch) message = '请输入有效的' + (input.type === 'number' ? '数字' : '内容');
+    else if (v.rangeUnderflow) message = '请输入不小于 ' + input.min + ' 的值';
+    else if (v.rangeOverflow) message = '请输入不大于 ' + input.max + ' 的值';
+    else if (v.stepMismatch) message = '请按 ' + (input.step || '1') + ' 的间隔填写';
+    else if (v.tooShort) message = '请至少输入 ' + input.minLength + ' 个字符';
+    else if (v.tooLong) message = '最多输入 ' + input.maxLength + ' 个字符';
+    else if (v.patternMismatch) message = input.id === 'export-month' ? '请按年-月填写，例如 2026-10' : '请按要求的格式填写';
+    input.setCustomValidity(message);
+}
+document.addEventListener('invalid', e => { if (e.target.setCustomValidity) chineseValidation(e.target) }, true);
+for (const event of ['input','change']) document.addEventListener(event, e => { if (e.target.setCustomValidity) e.target.setCustomValidity('') }, true);
