@@ -33,3 +33,5 @@ assert.ok(v.rows.some(r=>r[0]==='计量单位'&&r[2]==='筐'));
 v=view('product',{before:{product:'香菇采摘',price:500,stage:'semi',unit:'筐'},after:{product:'香菇采摘',price:600,stage:'semi',unit:'筐'}});
 assert.equal(v.rows.length,1);assert.equal(v.rows[0][0],'计件单价');
 console.log('Stage, unit and price-only audit checks passed');
+
+v=view('user_delete',{before:{name:'林晓',username:'employee'},after:{deleted:1}});assert.equal(v.title,'删除用户');assert.equal(v.subject,'林晓（employee）');assert.ok(v.note.includes('历史工作记录'));

@@ -27,6 +27,9 @@ function auditView(record, context) {
         };
         const before = flatten(d.before), after = flatten(d.after);
         for (const key of new Set([...Object.keys(before || {}), ...Object.keys(after || {})])) add(key, before?.[key] ?? (action === '提交日报' ? '未填写' : before ? '无此项目' : '未记录'), after?.[key] ?? (after ? '已移除' : '未记录'));
+    } else if (action === 'user_delete') {
+        title = '删除用户'; subject = `${d.before.name}（${d.before.username}）`;
+        rows.push(['账号状态', '可登录', '已删除，无法登录']); note = '历史工作记录和核算数据保留，原登录会话已失效。';
     } else if (action === 'workflow') {
         title = '创建产品流程'; subject = d.name;
         rows.push(['启用日期','未创建',d.start_date]);

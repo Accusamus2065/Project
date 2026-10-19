@@ -39,6 +39,8 @@ def initialize(path):
         from .migration import upgrade
 
         upgrade(db)
+        if "deleted" not in {r["name"] for r in db.execute("PRAGMA table_info(users)")}:
+            db.execute("ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1))")
         product_columns = {r['name'] for r in db.execute('PRAGMA table_info(products)')}
         for column,definition in [('process',"TEXT CHECK(process IN ('harvest','pack','seal'))"),('parent_id','INTEGER REFERENCES products(id)'),('family_name','TEXT')]:
             if column not in product_columns:
@@ -478,6 +480,8 @@ def save_report(db, actor, data):
     old = db.execute(
         "SELECT * FROM reports WHERE user_id=? AND date=?", (uid, day)
     ).fetchone()
+    if employee["deleted"] and not old:
+        raise RuleError("账号已删除，不能新增工作记录")
     if old:
         reason = text(data.get("reason"), "修改原因", 500)
         if data.get("version") != old["version"]:
@@ -684,6 +688,19 @@ def mutate(db, user, action, data):
     if action in ("shipment", "shipment_void", "count", "lot", "lot_delete"):
         raise RuleError("旧库存与批次功能已停用，请使用产品和当天入库点货")
     manager(user)
+    if action == "user_delete":
+        uid = number(data.get("id"), "用户", minimum=1)
+        if uid == user["id"]:
+            raise RuleError("不能删除当前登录账号，请由另一位经理操作")
+        target = db.execute("SELECT id,username,name,role,rate,deleted FROM users WHERE id=?", (uid,)).fetchone()
+        if not target or target["deleted"]:
+            raise RuleError("用户不存在或已删除")
+        if data.get("confirm_name") != target["username"]:
+            raise RuleError("请输入完整登录账号以确认删除")
+        db.execute("UPDATE users SET deleted=1,password='' WHERE id=?", (uid,))
+        db.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+        audit(db, user["id"], "user_delete", {"format": 2, "before": dict(target), "after": {**dict(target), "deleted": 1}})
+        return {"ok": True}
     before = None
     if action in ("user", "product", "product_delete") and data.get("id"):
         table, columns = (
@@ -702,7 +719,7 @@ def mutate(db, user, action, data):
         if data.get("id"):
             uid = number(data["id"], "员工", minimum=1)
             old = db.execute(
-                "SELECT id,name,rate FROM users WHERE id=?", (uid,)
+                "SELECT id,name,rate FROM users WHERE id=? AND deleted=0", (uid,)
             ).fetchone()
             if not old:
                 raise RuleError("员工不存在")
@@ -896,7 +913,7 @@ def state(db, user, day):
             [
                 dict(r)
                 for r in db.execute(
-                    "SELECT id,name,username,role,rate FROM users ORDER BY id"
+                    "SELECT id,name,username,role,rate,deleted FROM users ORDER BY id"
                 )
             ]
             if is_manager

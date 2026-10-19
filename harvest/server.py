@@ -68,7 +68,7 @@ class Handler(BaseHTTPRequestHandler):
         return (
             (
                 db.execute(
-                    "SELECT * FROM users WHERE id=?", (s["user_id"],)
+                    "SELECT * FROM users WHERE id=? AND deleted=0", (s["user_id"],)
                 ).fetchone(),
                 s,
             )
@@ -85,6 +85,10 @@ class Handler(BaseHTTPRequestHandler):
             "/favicon.svg",
             "/nebo-logo.webp",
             "/nebo-icon.png",
+            "/apple-touch-icon.png",
+            "/icon-192.png",
+            "/icon-512.png",
+            "/manifest.webmanifest",
             "/audit.js",
         ):
             name = {"/": "index.html"}.get(parsed.path, parsed.path[1:])
@@ -95,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
                 "svg": "image/svg+xml",
                 "webp": "image/webp",
                 "png": "image/png",
+                "webmanifest": "application/manifest+json",
             }[name.split(".")[-1]]
             return self.send(200, (WEB / name).read_bytes(), mime + "; charset=utf-8")
         if parsed.path == "/api/config":
@@ -253,7 +258,7 @@ class Handler(BaseHTTPRequestHandler):
                             429, {"error": "尝试次数过多，请 15 分钟后重试"}
                         )
                     user = db.execute(
-                        "SELECT * FROM users WHERE username=?", (username,)
+                        "SELECT * FROM users WHERE username=? AND deleted=0", (username,)
                     ).fetchone()
                     if not user or not core.password_ok(
                         data.get("password"), user["password"]

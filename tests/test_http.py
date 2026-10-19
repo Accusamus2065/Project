@@ -41,10 +41,23 @@ class HTTPWorkflow(unittest.TestCase):
         self.assertEqual(status,200)
         return cookie,json.loads(body)['csrf']
     def test_unauthenticated_and_origin(self):
-        for asset in ('/nebo-logo.webp','/nebo-icon.png','/audit.js'):
+        for asset in ('/nebo-logo.webp','/nebo-icon.png','/audit.js','/apple-touch-icon.png','/icon-192.png','/icon-512.png','/manifest.webmanifest'):
             self.assertEqual(self.request(asset)[0],200)
         self.assertEqual(self.request('/api/state')[0],401)
         self.assertEqual(self.request('/api/login',{'username':'boss','password':'TestPassword123!'},origin='https://evil.example')[0],403)
+    def test_home_screen_manifest(self):
+        status, raw, headers = self.request('/manifest.webmanifest')
+        self.assertEqual(status, 200)
+        self.assertIn('application/manifest+json', headers['Content-Type'])
+        manifest = json.loads(raw)
+        self.assertEqual(manifest['start_url'], '/')
+        import struct
+        for icon in manifest['icons'] + [{'src':'/apple-touch-icon.png','sizes':'180x180'}]:
+            status, raw, headers = self.request(icon['src'])
+            self.assertEqual(status, 200)
+            self.assertEqual(raw[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertEqual(struct.unpack('>II', raw[16:24]), tuple(map(int,icon['sizes'].split('x'))))
+
     def test_complete_employee_manager_workflow(self):
         cookie,csrf=self.login('worker')
         report={'date':dt.date.today().isoformat(),'hours':8,'pieces':[{'product_id':1,'quantity':94}],'timed':[{'hours':1.5,'memo':'=SUM(A1)'}]}
@@ -95,6 +108,24 @@ class HTTPWorkflow(unittest.TestCase):
         status,body,_=self.request('/api/monthly-export'+query,cookie=cookie)
         self.assertEqual(status,200);self.assertEqual(body,to_csv(report))
         self.assertEqual(self.request('/api/monthly?month=2026-99&kind=products',cookie=cookie)[0],400)
+
+    def test_user_deletion_permissions_and_session_revocation(self):
+        boss, csrf = self.login('boss')
+        worker, worker_csrf = self.login('worker')
+        body = {'username':'remove_me','name':'待删除经理','role':'manager','rate':20,'password':'TestPassword123!'}
+        self.assertEqual(self.request('/api/user', body, boss, csrf)[0], 200)
+        victim, victim_csrf = self.login('remove_me')
+        _, raw, _ = self.request('/api/state', cookie=victim)
+        uid = json.loads(raw)['user']['id']
+        delete = {'id':uid,'confirm_name':'remove_me'}
+        self.assertEqual(self.request('/api/user_delete', delete, victim, victim_csrf)[0], 400)
+        self.assertEqual(self.request('/api/user_delete', delete, worker, worker_csrf)[0], 400)
+        self.assertEqual(self.request('/api/user_delete', {**delete,'confirm_name':'wrong'}, boss, csrf)[0], 400)
+        self.assertEqual(self.request('/api/user_delete', delete, boss, csrf)[0], 200)
+        self.assertEqual(self.request('/api/state', cookie=victim)[0], 401)
+        self.assertEqual(self.request('/api/login', {'username':'remove_me','password':'TestPassword123!'})[0], 401)
+        self.assertEqual(self.request('/api/user_delete', delete, boss, csrf)[0], 400)
+        self.assertEqual(self.request('/api/user', {'id':uid,'name':'再次编辑','rate':20}, boss, csrf)[0], 400)
 
     def test_login_throttle(self):
         for _ in range(10):self.assertEqual(self.request('/api/login',{'username':'missing','password':'wrongPassword'})[0],401)

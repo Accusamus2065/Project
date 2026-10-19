@@ -25,6 +25,24 @@ class BusinessRules(unittest.TestCase):
     def count(self,pid=1,actual=94,**kw):
         row=next(r for r in core.inventory(self.db,self.day) if r['id']==pid)
         return {'date':self.day,'product_id':pid,'actual':actual,'version':row['version'],'signature':row['signature'],**kw}
+    def test_deleted_employee_history_preserved(self):
+        self.run_action(self.worker,'report',self.report())
+        original=core.state(self.db,self.boss,self.day)['reports'][0]
+        from harvest.monthly import build
+        monthly_before=build(self.db,self.boss,self.day[:7],'employees')
+        self.run_action(self.boss,'user_delete',{'id':self.worker['id'],'confirm_name':'worker'})
+        after=core.state(self.db,self.boss,self.day)
+        self.assertEqual(after['reports'][0],original)
+        self.assertEqual(build(self.db,self.boss,self.day[:7],'employees'),monthly_before)
+        self.assertEqual(next(u for u in after['users'] if u['id']==self.worker['id'])['deleted'],1)
+        # Historical joins must still resolve the employee, and corrections remain possible.
+        self.run_action(self.boss,'report',self.report(user_id=self.worker['id'],version=original['version'],reason='核实历史记录'))
+        with self.assertRaises(core.RuleError):
+            self.run_action(self.boss,'report',self.report(user_id=self.worker['id'],date=self.yesterday))
+        self.db.commit()
+        core.initialize(self.path)
+        self.assertEqual(self.db.execute('SELECT deleted FROM users WHERE id=?',(self.worker['id'],)).fetchone()[0],1)
+
     def test_calculation_and_persistence(self):
         self.run_action(self.worker,'report',self.report())
         r=core.state(self.db,self.worker,self.day)['reports'][0]
@@ -193,6 +211,6 @@ class Migration(unittest.TestCase):
                 actor=db.execute('SELECT * FROM users').fetchone();r=core.state(db,actor,'2026-01-01')['reports'][0]
                 core.save_report(db,actor,{'date':'2026-01-01','piece_hours':1,'version':1,'reason':'确认','pieces':r['pieces'],'timed':[]})
                 self.assertEqual(db.execute('SELECT amount FROM reports').fetchone()[0],662)
-                db.execute("INSERT INTO users VALUES(2,'checker','点货员','checker',0,'hash')")
+                db.execute("INSERT INTO users(id,username,name,role,rate,password) VALUES(2,'checker','点货员','checker',0,'hash')")
 
 if __name__=='__main__':unittest.main()
