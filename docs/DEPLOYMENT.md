@@ -6,7 +6,25 @@
 
 ## 运行环境
 
-Python 3.11+，标准库，无第三方包。SQLite 适用于当前小团队单实例场景，数据必须存放在本机持久磁盘；不要放到网络共享盘或运行多个独立数据库副本。当前 HTTP 服务使用 Python 标准库，作为 MVP/本地验证入口；正式上线前应评估受控内网规模及生产服务适配、反向代理和进程监管，不应直接暴露该端口到公网。
+Python 3.11+；正式入口使用 requirements.txt 固定版本的 Waitress，业务逻辑仍使用标准库。SQLite 适用于当前小团队单实例场景，数据必须存放在本机持久磁盘；不要放到网络共享盘或运行多个独立数据库副本。本地预览可使用 harvest.server；Render 使用 harvest.production，由 Waitress 处理 HTTP、Render 终结 HTTPS。正式接收业务数据前仍需配置异地自动备份并完成恢复验收。
+
+## Render 配置
+
+- Language：Python 3；Branch：main；Root Directory：留空。
+- Build Command：`pip install -r requirements.txt`
+- Start Command：`python -m harvest.production`
+- Health Check Path：`/healthz`
+- Pre-Deploy Command：留空，磁盘仅在运行时可访问；初始化在启动入口执行。
+- Auto-Deploy：初次上线先关闭，验证代码后手动部署。
+- 正式实例：付费 Compute，磁盘 Mount Path `/var/data`，数据库路径 `/var/data/harvest.sqlite3`。仅一个实例。
+- 环境变量 `TZ`：工厂实际业务时区（多伦多为 `America/Toronto`）。
+- 环境变量 `HARVEST_ADMIN_PASSWORD`：首次启动的管理员密码，至少 10 位，单独生成并保存；账号为 `admin`。已有用户时不会覆盖密码，首次成功后删除此变量并重新部署。
+- `HARVEST_ORIGIN`：使用 Render 默认网址时不必填写，自动读取 `RENDER_EXTERNAL_URL`；使用自定义域名后填写完整 HTTPS 来源，不带路径。
+- Secure Cookie 在正式入口中自动启用。不能用 HTTP 浏览器地址验收登录会话。
+
+免费临时试用必须显式设置 `HARVEST_ALLOW_EPHEMERAL=1` 和 `HARVEST_DB=/tmp/nebo-trial.sqlite3`，不添加磁盘；重启、休眠、重新部署可能丢失全部数据，只能用于非正式测试。试用期间保留初始化密码变量，以便临时数据库丢失后重新创建管理员。升级正式服务时删除临时存储开关，把数据库路径改为持久化目录，按全新正式数据库初始化；不要假设试用数据会自动迁移。
+
+已在本地测试实际 Waitress 启动、健康检查、登录、首次初始化及删除初始化密码后的重启；尚未完成 Render 线上验收与自动异地备份。
 
 ## 正式数据库初始化
 
@@ -35,7 +53,7 @@ python3 -m harvest.server --db /absolute/persistent/path/harvest.sqlite3 --host 
 
 现有保护：PBKDF2-SHA256（600,000 次）随机盐密码哈希；数据库仅保存会话 token 的哈希；12 小时会话；HttpOnly/SameSite Cookie；HTTPS 模式 Secure Cookie；Origin 校验；写接口 CSRF；登录尝试限流；服务端角色权限；参数化 SQL；输出转义；CSV 公式注入防护；请求大小限制；同源 CSP。
 
-经理可以重设密码，重设后该账号所有会话失效。当前未实现 MFA、账号停用、自动密码找回、全局登录限流清理、外部 SSO 或完整的账户生命周期；应结合实际访问范围确定正式版本所需措施。
+经理可以重设密码，重设后该账号所有会话失效。当前支持删除账号并保留业务历史；尚未实现 MFA、自动密码找回、全局登录限流清理或外部 SSO；应结合实际访问范围确定正式版本所需措施。
 
 ## 备份与恢复
 
