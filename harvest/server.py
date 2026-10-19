@@ -10,6 +10,7 @@ import os
 import secrets
 import sqlite3
 import time
+from contextlib import closing
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +27,8 @@ class Handler(BaseHTTPRequestHandler):
         payload,
         content_type="application/json; charset=utf-8",
         cookie=None,
+        cache_control="no-store",
+        etag=None,
     ):
         body = (
             json.dumps(payload, ensure_ascii=False).encode()
@@ -35,7 +38,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
+        if etag:
+            self.send_header("ETag", etag)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header(
@@ -101,10 +106,17 @@ class Handler(BaseHTTPRequestHandler):
                 "png": "image/png",
                 "webmanifest": "application/manifest+json",
             }[name.split(".")[-1]]
-            return self.send(200, (WEB / name).read_bytes(), mime + "; charset=utf-8")
+            body = (WEB / name).read_bytes()
+            etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+            # Revalidate on every visit: reuse unchanged assets without serving old code.
+            matches = [value.strip().removeprefix("W/") for value in
+                       self.headers.get("If-None-Match", "").split(",")]
+            unchanged = etag in matches or "*" in matches
+            return self.send(304 if unchanged else 200, b"" if unchanged else body,
+                             mime + "; charset=utf-8", cache_control="no-cache", etag=etag)
         if parsed.path == "/api/config":
             return self.send(200, {"demo": self.server.demo})
-        with core.connect(self.server.database) as db:
+        with closing(core.connect(self.server.database)) as db, db:
             user, session = self.session(db)
             if not user:
                 return self.send(401, {"error": "请先登录"})
@@ -243,7 +255,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError):
             return self.send(400, {"error": "请求内容无效"})
         action = self.path.removeprefix("/api/")
-        with core.connect(self.server.database) as db:
+        with closing(core.connect(self.server.database)) as db, db:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 if action == "login":
@@ -328,7 +340,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def seed(path):
-    with core.connect(path) as db:
+    with closing(core.connect(path)) as db, db:
         if db.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
             # Existing demo accounts keep their credentials and data.
             if not db.execute(
@@ -392,7 +404,7 @@ def main():
     if args.init_admin:
         import getpass
 
-        with core.connect(path) as db:
+        with closing(core.connect(path)) as db, db:
             if db.execute("SELECT 1 FROM users").fetchone():
                 raise SystemExit(
                     "Database already has users; use manager account management."
@@ -406,7 +418,7 @@ def main():
             )
         print("Created admin. Start without --init-admin.")
         return
-    with core.connect(path) as db:
+    with closing(core.connect(path)) as db, db:
         if not db.execute("SELECT 1 FROM users").fetchone():
             raise SystemExit(
                 "Run python3 -m harvest.server --init-admin first, or use --demo."

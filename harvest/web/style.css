@@ -250,13 +250,6 @@ a {
     color: var(--muted)
 }
 
-.demo-tag {
-    font-size: .75rem;
-    border: 1px solid #d4dfd5;
-    border-radius: 4px;
-    padding: 4px 8px;
-    white-space: nowrap
-}
 
 .content {
     max-width: 1420px;
@@ -686,8 +679,28 @@ dialog::backdrop {
     padding: 14px
 }
 
-.login-box .hint {
-    font-size: .8125rem
+.login-credits {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px 12px;
+    margin-top: 28px;
+    color: var(--muted);
+    font-size: .75rem;
+    line-height: 1.8;
+    text-align: center;
+}
+
+.login-credits a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: #b9c9be;
+    text-underline-offset: 3px;
+}
+
+.login-credits a:hover,
+.login-credits a:focus-visible {
+    color: var(--green, #008215);
 }
 
 .error {
@@ -1369,9 +1382,6 @@ button,
         font-size: .875rem;
     }
 
-    .demo-tag {
-        padding: 3px 5px;
-    }
 
     .content {
         padding: 22px 14px calc(30px + env(safe-area-inset-bottom));

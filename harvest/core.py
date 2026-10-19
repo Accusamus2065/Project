@@ -54,6 +54,8 @@ def initialize(path):
         db.execute("CREATE INDEX IF NOT EXISTS audit_at_idx ON audit(at)")
         db.execute("CREATE INDEX IF NOT EXISTS audit_actor_idx ON audit(actor,id)")
         db.execute("CREATE INDEX IF NOT EXISTS audit_action_idx ON audit(action,id)")
+        db.execute("CREATE INDEX IF NOT EXISTS intake_counts_date_idx ON intake_counts(date)")
+        db.execute("CREATE INDEX IF NOT EXISTS direct_sales_date_idx ON direct_sales(date)")
         # Only established links prove a process. Never guess the picking source.
         for link in db.execute('SELECT * FROM process_links').fetchall():
             db.execute("UPDATE products SET process='pack' WHERE id=? AND process IS NULL",(link['source_id'],))
@@ -151,7 +153,25 @@ def _work_items(db, day):
         (day,),
     ).fetchall()
     # Retiring a finished item must not hide unresolved packing from prior days.
-    reported_ids = {p['product_id'] for r in reports for p in json.loads(r['pieces'])}
+    # Parse each report once; retain report order for reconciliation signatures.
+    contributors_by_product = {}
+    for report in reports:
+        quantities = {}
+        for piece in json.loads(report["pieces"]):
+            pid = piece["product_id"]
+            quantities[pid] = quantities.get(pid, 0) + piece["quantity"]
+        for pid, qty in quantities.items():
+            if qty:
+                contributors_by_product.setdefault(pid, []).append(
+                    {"report_id": report["id"], "name": report["name"], "quantity": qty}
+                )
+    reported_ids = set(contributors_by_product)
+    counts = {r["product_id"]: r for r in db.execute(
+        "SELECT c.*,u.name AS counter FROM intake_counts c JOIN users u ON u.id=c.actor WHERE date=?", (day,)
+    )}
+    sales = {r["product_id"]: r for r in db.execute(
+        "SELECT s.*,u.name AS recorder FROM direct_sales s JOIN users u ON u.id=s.actor WHERE date=?", (day,)
+    )}
     pending_targets = {
         target for source, target in db.execute(
             "SELECT source_id,target_id FROM process_links WHERE start_date<=? "
@@ -163,25 +183,9 @@ def _work_items(db, day):
     for product in db.execute(
         "SELECT * FROM products WHERE start_date<=? ORDER BY product,id", (day,)
     ):
-        contributors = []
-        for report in reports:
-            qty = sum(
-                p["quantity"]
-                for p in json.loads(report["pieces"])
-                if p["product_id"] == product["id"]
-            )
-            if qty:
-                contributors.append(
-                    {"report_id": report["id"], "name": report["name"], "quantity": qty}
-                )
-        count = db.execute(
-            "SELECT c.*,u.name AS counter FROM intake_counts c JOIN users u ON u.id=c.actor WHERE product_id=? AND date=?",
-            (product["id"], day),
-        ).fetchone()
-        sale = db.execute(
-            "SELECT s.*,u.name AS recorder FROM direct_sales s JOIN users u ON u.id=s.actor WHERE product_id=? AND date=?",
-            (product["id"], day),
-        ).fetchone()
+        contributors = contributors_by_product.get(product["id"], [])
+        count = counts.get(product["id"])
+        sale = sales.get(product["id"])
         if product["deleted"] and not contributors and not count and not sale and product['id'] not in pending_targets:
             continue
         expected = sum(c["quantity"] for c in contributors)
@@ -301,7 +305,7 @@ def process_checks(db, day, inv=None):
         a = sum(items.get(i,{}).get('expected',0) for i in sources)
         b = sum(items.get(i,{}).get('expected',0) for i in targets)
         def names(ids):
-            return ' + '.join(items.get(i,{}).get('product', db.execute('SELECT product FROM products WHERE id=?',(i,)).fetchone()[0]) for i in ids)
+            return ' + '.join((items[i]['product'] if i in items else db.execute('SELECT product FROM products WHERE id=?',(i,)).fetchone()[0]) for i in ids)
         result.append(dict(id=min(group),source_ids=sources,target_ids=targets,source=names(sources),target=names(targets),unit=present[0]['unit'],
             packed=a,sealed=b,difference=b-a,status='pending' if a==b==0 else 'passed' if a==b else 'mismatch',
             packers=[c for i in sources for c in items.get(i,{}).get('contributors',[])],

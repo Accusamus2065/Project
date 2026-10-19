@@ -58,6 +58,45 @@ class HTTPWorkflow(unittest.TestCase):
             self.assertEqual(raw[:8], b'\x89PNG\r\n\x1a\n')
             self.assertEqual(struct.unpack('>II', raw[16:24]), tuple(map(int,icon['sizes'].split('x'))))
 
+    def test_static_revalidation_keeps_private_responses_uncached(self):
+        status, body, headers = self.request('/app.js')
+        self.assertEqual(status, 200)
+        self.assertTrue(body)
+        self.assertEqual(headers['Cache-Control'], 'no-cache')
+        for tag, expected in [(headers['ETag'], 304), ('W/' + headers['ETag'], 304), ('"old-version"', 200)]:
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port)
+            conn.request('GET', '/app.js', headers={'If-None-Match': tag})
+            response = conn.getresponse()
+            self.assertEqual(response.status, expected)
+            self.assertEqual(response.read(), b'' if expected == 304 else body)
+            conn.close()
+        cookie, _ = self.login('boss')
+        _, _, headers = self.request('/api/state', cookie=cookie)
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        self.assertNotIn('ETag', headers)
+
+    def test_requests_close_database_connections(self):
+        import sqlite3
+        from unittest.mock import patch, Mock
+        connections = []
+        connect = core.connect
+        def tracked(path):
+            db = connect(path)
+            connections.append(db)
+            return db
+        handler = Handler.__new__(Handler)
+        handler.path = '/api/state'
+        handler.server = self.server
+        handler.session = lambda db: (db.execute("SELECT * FROM users WHERE username='boss'").fetchone(), {'csrf':'test'})
+        handler.send = Mock()
+        with patch.object(core, 'connect', tracked):
+            handler.do_GET()
+        self.assertEqual(handler.send.call_args.args[0], 200)
+        self.assertTrue(connections)
+        for db in connections:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                db.execute('SELECT 1')
+
     def test_complete_employee_manager_workflow(self):
         cookie,csrf=self.login('worker')
         report={'date':dt.date.today().isoformat(),'hours':8,'pieces':[{'product_id':1,'quantity':94}],'timed':[{'hours':1.5,'memo':'=SUM(A1)'}]}
