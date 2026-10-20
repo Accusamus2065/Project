@@ -45,6 +45,24 @@ class HTTPWorkflow(unittest.TestCase):
             self.assertEqual(self.request(asset)[0],200)
         self.assertEqual(self.request('/api/state')[0],401)
         self.assertEqual(self.request('/api/login',{'username':'boss','password':'TestPassword123!'},origin='https://evil.example')[0],403)
+    def test_count_permission_updates_existing_session(self):
+        boss, token = self.login('boss')
+        with core.connect(self.server.database) as db:
+            uid = db.execute("INSERT INTO users(username,name,role,rate,password) VALUES(?,?,?,?,?)", ('dual','dual','employee',2000,core.password_hash('TestPassword123!'))).lastrowid
+        employee, csrf = self.login('dual')
+        for allowed in (1, 0):
+            status, _, _ = self.request('/api/user', {'id':uid,'name':'dual','rate':20,'can_count':allowed}, boss, token)
+            self.assertEqual(status, 200)
+            _, raw, _ = self.request('/api/state', cookie=employee)
+            state = json.loads(raw)
+            self.assertEqual(state['user']['can_count'], bool(allowed))
+            self.assertEqual(bool(state['inventory']), bool(allowed))
+            if allowed:
+                self.assertNotIn('expected', state['inventory'][0])
+            else:
+                status, _, _ = self.request('/api/intake_count', {'date':dt.date.today().isoformat(),'product_id':1,'actual':0}, employee, csrf)
+                self.assertEqual(status, 400)
+
     def test_home_screen_manifest(self):
         status, raw, headers = self.request('/manifest.webmanifest')
         self.assertEqual(status, 200)

@@ -59,8 +59,8 @@ function auditView(record, context) {
         const old = d.before;
         title = action === 'user' ? (isNew ? '创建员工账号' : '修改员工资料') : (isNew ? '添加 Lot' : '调整 Lot 单价');
         subject = action === 'user' ? (current.name || userName(d.id)) : (current.code || lot(d.id)?.code || `Lot #${d.id}`);
-        const fields = action === 'user' ? [['name', '姓名'], ['username', '登录账号'], ['role', '角色'], ['rate', '计时时薪']] : [['code', 'Lot number'], ['product', '产品'], ['unit', '计量单位'], ['per_box', '每盒蘑菇数量'], ['price', '计件单价'], ['opening', '起始库存'], ['start_date', '起始库存日期']];
-        const format = (obj, key) => obj?.[key] == null ? '未记录' : key === 'rate' || key === 'price' ? amount(Number(obj[key]) * (d.format === 2 ? 1 : 100)) + (key === 'rate' ? ' / 小时' : '') : key === 'role' ? (roles[obj[key]] || obj[key]) : val(obj[key]);
+        const fields = action === 'user' ? [['name', '姓名'], ['username', '登录账号'], ['role', '角色'], ['rate', '计时时薪'], ['can_count', '额外点货权限']] : [['code', 'Lot number'], ['product', '产品'], ['unit', '计量单位'], ['per_box', '每盒蘑菇数量'], ['price', '计件单价'], ['opening', '起始库存'], ['start_date', '起始库存日期']];
+        const format = (obj, key) => obj?.[key] == null ? '未记录' : key === 'rate' || key === 'price' ? amount(Number(obj[key]) * (d.format === 2 ? 1 : 100)) + (key === 'rate' ? ' / 小时' : '') : key === 'can_count' ? (Number(obj[key]) ? '开启' : '未开启') : key === 'role' ? (roles[obj[key]] || obj[key]) : val(obj[key]);
         for (const [key, label] of fields) if (current[key] != null) add(label, isNew ? '未创建' : format(old, key), format(current, key));
         if (d.password_reset) add('登录密码', '已设置（不显示密码）', '已重设，原登录会话已失效');
         if (!isNew && !old) note = '这条旧记录未保存修改前的数据，原值无法还原。';

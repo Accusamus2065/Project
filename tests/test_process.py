@@ -47,6 +47,10 @@ class ProcessRules(unittest.TestCase):
         self.run_action(self.other,'report',self.report(pieces=[{'product_id':1,'quantity':100}]))
         r=core.process_checks(self.db,self.day)[0]
         self.assertEqual((r['packed'],r['sealed'],r['difference']),(0,100,100))
+        # Links now establish the same dependency immediately as after restart.
+        with self.assertRaises(core.RuleError):
+            self.run_action(self.boss,'product_delete',{'id':3,'confirm_name':self.db.execute('SELECT product FROM products WHERE id=?',(3,)).fetchone()[0]})
+        self.run_action(self.boss,'product_delete',{'id':1,'confirm_name':self.db.execute('SELECT product FROM products WHERE id=1').fetchone()[0]})
         self.run_action(self.boss,'product_delete',{'id':3,'confirm_name':self.db.execute('SELECT product FROM products WHERE id=?',(3,)).fetchone()[0]})
         self.assertEqual(len(core.process_checks(self.db,self.day)),1)
         core.initialize(self.path)

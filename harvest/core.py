@@ -41,6 +41,8 @@ def initialize(path):
         upgrade(db)
         if "deleted" not in {r["name"] for r in db.execute("PRAGMA table_info(users)")}:
             db.execute("ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1))")
+        if "can_count" not in {r["name"] for r in db.execute("PRAGMA table_info(users)")}:
+            db.execute("ALTER TABLE users ADD COLUMN can_count INTEGER NOT NULL DEFAULT 0 CHECK(can_count IN (0,1))")
         product_columns = {r['name'] for r in db.execute('PRAGMA table_info(products)')}
         for column,definition in [('process',"TEXT CHECK(process IN ('harvest','pack','seal'))"),('parent_id','INTEGER REFERENCES products(id)'),('family_name','TEXT')]:
             if column not in product_columns:
@@ -264,7 +266,7 @@ def inventory(db, day):
         p['has_difference'] = bool(check and check['difference']) or (p['actual'] is not None and p['sales_recorded'] and p['difference'] != 0)
         p['missing_records'] = []
         if not p['contributors']:
-            p['missing_records'].append('封膜记录')
+            p['missing_records'].append('封膜记录' if p['process'] == 'seal' or check else '成品生产记录')
         if check and not check['packers']:
             p['missing_records'].append('分包记录')
         if p['actual'] is None:
@@ -368,6 +370,8 @@ def save_process_link(db, user, data):
         "INSERT INTO process_links(source_id,target_id,start_date) VALUES(?,?,?)",
         (sid, tid, start),
     )
+    db.execute("UPDATE products SET process='pack' WHERE id=? AND process IS NULL", (sid,))
+    db.execute("UPDATE products SET process='seal',parent_id=? WHERE id=? AND process IS NULL", (sid,tid))
     audit(
         db,
         user["id"],
@@ -382,8 +386,12 @@ def save_process_link(db, user, data):
     return {"ok": True}
 
 
+def can_count(user):
+    return user["role"] in ("manager", "checker") or bool(dict(user).get("can_count", 0))
+
+
 def save_count(db, user, data):
-    if user["role"] not in ("manager", "checker"):
+    if not can_count(user):
         raise RuleError("此操作需要点货员或经理权限")
     day = date(data.get("date"))
     pid = number(data.get("product_id"), "产品", minimum=1)
@@ -708,7 +716,7 @@ def mutate(db, user, action, data):
     before = None
     if action in ("user", "product", "product_delete") and data.get("id"):
         table, columns = (
-            ("users", "id,username,name,role,rate")
+            ("users", "id,username,name,role,rate,can_count")
             if action == "user"
             else ("products", "*")
         )
@@ -720,6 +728,10 @@ def mutate(db, user, action, data):
     if action == "user":
         name = text(data.get("name"), "姓名")
         rate = number(data.get("rate"), "时薪", 100)
+        permission = data.get("can_count", before.get("can_count", 0) if before else 0)
+        if permission not in (0, 1, "0", "1"):
+            raise RuleError("点货权限无效")
+        permission = int(permission)
         if data.get("id"):
             uid = number(data["id"], "员工", minimum=1)
             old = db.execute(
@@ -727,7 +739,7 @@ def mutate(db, user, action, data):
             ).fetchone()
             if not old:
                 raise RuleError("员工不存在")
-            db.execute("UPDATE users SET name=?,rate=? WHERE id=?", (name, rate, uid))
+            db.execute("UPDATE users SET name=?,rate=?,can_count=? WHERE id=?", (name, rate, permission, uid))
             if data.get("password"):
                 db.execute(
                     "UPDATE users SET password=? WHERE id=?",
@@ -740,8 +752,8 @@ def mutate(db, user, action, data):
             if role not in ("employee", "manager", "checker"):
                 raise RuleError("角色无效")
             db.execute(
-                "INSERT INTO users(username,name,role,rate,password) VALUES(?,?,?,?,?)",
-                (username, name, role, rate, password_hash(data.get("password"))),
+                "INSERT INTO users(username,name,role,rate,password,can_count) VALUES(?,?,?,?,?,?)",
+                (username, name, role, rate, password_hash(data.get("password")), permission),
             )
     elif action == "product":
         price = number(data.get("price"), "计件单价", 100)
@@ -755,6 +767,13 @@ def mutate(db, user, action, data):
                     "工序、关联和单位创建后不可更改，请建立新项目以保留历史核算"
                 )
             db.execute("UPDATE products SET price=? WHERE id=?", (price, before["id"]))
+        elif data.get('process') is None and data.get('stage') in ('finished', 'semi'):
+            if data.get('parent_id') or data.get('family_name'):
+                raise RuleError('请通过分包与封膜关联设置工序关系')
+            rid = db.execute('INSERT INTO products(product,unit,stage,price,start_date) VALUES(?,?,?,?,?)',
+                (text(data.get('product'), '产品名称', 80), text(data.get('unit'), '单位', 12),
+                 data['stage'], price, date(data.get('start_date')))).lastrowid
+            data = {**data, 'id': rid}
         else:
             process=data.get('process')
             names={'harvest':'采摘','pack':'分包','seal':'封膜'}
@@ -804,7 +823,7 @@ def mutate(db, user, action, data):
     else:
         raise RuleError("未知操作")
     table, columns = (
-        ("users", "id,username,name,role,rate")
+        ("users", "id,username,name,role,rate,can_count")
         if action == "user"
         else ("products", "*")
     )
@@ -826,20 +845,8 @@ def mutate(db, user, action, data):
     return {"ok": True}
 
 
-def state(db, user, day):
-    is_manager = user["role"] == "manager"
-    inv = inventory(db, day)
-    public_user = {k: user[k] for k in ("id", "name", "username", "role", "rate")}
-    if user["role"] == "checker":
-        public_user.pop("rate")
-        return {
-            "user": public_user,
-            "date": day,
-            "products": [],
-            "reports": [],
-            "users": [],
-            "audit": [],
-            "inventory": [
+def counting_inventory(inv):
+    return [
                 {
                     k: r[k]
                     for k in (
@@ -864,7 +871,24 @@ def state(db, user, day):
                     )
                 }
                 for r in inv if r["stage"] == "finished"
-            ],
+            ]
+
+
+def state(db, user, day):
+    is_manager = user["role"] == "manager"
+    inv = inventory(db, day)
+    public_user = {k: user[k] for k in ("id", "name", "username", "role", "rate")}
+    public_user["can_count"] = can_count(user)
+    if user["role"] == "checker":
+        public_user.pop("rate")
+        return {
+            "user": public_user,
+            "date": day,
+            "products": [],
+            "reports": [],
+            "users": [],
+            "audit": [],
+            "inventory": counting_inventory(inv),
         }
     query = (
         "SELECT r.*,u.name FROM reports r JOIN users u ON u.id=r.user_id WHERE r.date=?"
@@ -912,12 +936,12 @@ def state(db, user, day):
             dict(r) for r in db.execute("SELECT * FROM products ORDER BY product,id")
         ],
         "reports": reports,
-        "inventory": [{**p,"product":p["finished_name"]} for p in inv if p["stage"]=="finished"] if is_manager else [],
+        "inventory": [{**p,"product":p["finished_name"]} for p in inv if p["stage"]=="finished"] if is_manager else counting_inventory(inv) if can_count(user) else [],
         "users": (
             [
                 dict(r)
                 for r in db.execute(
-                    "SELECT id,name,username,role,rate,deleted FROM users ORDER BY id"
+                    "SELECT id,name,username,role,rate,can_count,deleted FROM users ORDER BY id"
                 )
             ]
             if is_manager
