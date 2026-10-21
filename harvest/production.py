@@ -108,6 +108,8 @@ def prepare(env=None):
 def main():
     from waitress import serve
     config = prepare()
+    from . import backup
+    backup.start(config.database)
     serve(application(config), host='0.0.0.0', port=int(os.environ.get('PORT', '10000')),
           threads=4, max_request_body_size=100000, channel_timeout=60,
           expose_tracebacks=False, clear_untrusted_proxy_headers=True)

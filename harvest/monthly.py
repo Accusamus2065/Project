@@ -81,7 +81,10 @@ def build(db, user, month, kind):
                 pieces = json.loads(r["pieces"])
                 piece_amount += sum(p["price"] * p["quantity"] for p in pieces)
                 for p in pieces:
-                    key = (p.get("process") or p.get("stage", "finished"), p["unit"])
+                    stage=p.get("process") or p.get("stage", "finished")
+                    label=p.get('step_name') or dict(harvest='采摘',pack='分包',seal='封膜',semi='半成品',finished='成品')[stage]
+                    order=p.get('step_order') or dict(harvest=1,pack=2,seal=3,finished=4,semi=5).get(stage,6)
+                    key = (order, label, p["unit"])
                     quantities[key] = quantities.get(key, 0) + p["quantity"]
                 timed_minutes += sum(t["minutes"] for t in json.loads(r["timed"]))
                 unresolved += int(
@@ -92,8 +95,8 @@ def build(db, user, month, kind):
                 )
             quantity = (
                 "；".join(
-                    f"{dict(harvest='采摘',pack='分包',seal='封膜',semi='半成品',finished='成品')[stage]} {qty} {unit}"
-                    for (stage, unit), qty in sorted(quantities.items())
+                    f"{label} {qty} {unit}"
+                    for (order, label, unit), qty in sorted(quantities.items())
                 )
                 or "—"
             )

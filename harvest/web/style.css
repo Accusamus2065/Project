@@ -2465,3 +2465,117 @@ input::placeholder, textarea::placeholder { font-weight:400; }
 .user-actions > * { flex:0 0 auto; white-space:nowrap; overflow-wrap:normal; }
 .user-actions .quiet { width:64px; min-height:44px; padding:8px 12px; }
 .user-actions .current-account:disabled { color:var(--muted); background:#f1f5f1; border-radius:6px; opacity:1; cursor:default; }
+
+/* Variable-length product workflow editor. */
+.flow-check { padding:18px 0; }
+.flow-check > label { display:flex; align-items:center; gap:10px; }
+.flow-check input[type=checkbox] { width:18px; height:18px; min-height:18px; margin:0; }
+#flow-check-fields { display:flex; align-items:center; gap:18px; }
+#flow-check-fields[hidden] { display:none; }
+@media(max-width:600px) { #flow-check-fields { display:block; } }
+
+/* Product flows: a clear hierarchy from product to step to reconciliation. */
+.product-flow-card { padding:28px; border-radius:20px; box-shadow:0 4px 18px #183f2510; }
+.product-flow-card .card-head { margin-bottom:24px; align-items:center; }
+.product-flow-card .card-head h2 { font-size:24px; letter-spacing:-.5px; margin-bottom:8px; }
+.product-flow-card .card-head small { font-size:13px; color:#768279; }
+.product-flow-card [data-flow-edit] { border-color:#cfddd0; background:#f3f7f1; color:#356341; border-radius:10px; font-size:13px; padding:10px 18px; }
+.product-flow-card .workflow-steps { gap:18px; }
+.product-step { position:relative; padding:20px 22px; background:#fafbf8; border:1px solid #e2e8df; border-top:3px solid #c5aa70; border-radius:12px; }
+.product-step.is-finished { background:#f1f7ef; border-color:#d4e3d0; border-top-color:#368443; }
+.product-step-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+.step-number { font-size:13px; font-weight:750; letter-spacing:1px; color:#99732e; }
+.step-status { border-radius:6px; padding:4px 8px; font-size:11px; font-weight:650; color:#887348; background:#f1eadb; }
+.is-finished .step-status { background:#deedd8; color:#386a32; }
+.is-finished .step-number { color:#397747; }
+.product-step h3 { font-size:22px; margin:0 0 7px; letter-spacing:-.4px; }
+.product-step .step-fullname { font-size:12px; font-weight:400; color:#7a887e; line-height:1.5; }
+.step-price { display:flex; align-items:baseline; gap:7px; margin:22px 0 18px; }
+.step-price strong { font-size:28px; font-weight:650; font-variant-numeric:tabular-nums; letter-spacing:-1px; }
+.step-price span { font-size:13px; color:#788578; }
+.product-step .step-disable { align-self:flex-end; width:auto; min-height:30px; padding:4px 0; margin-top:auto; font-size:12px; font-weight:500; color:#96746b; background:transparent; }
+.product-step .step-disable:hover { color:#ae3c29; text-decoration:underline; }
+.flow-reconcile { margin-top:20px; padding:15px 18px; display:flex; align-items:center; gap:12px; background:#f3f6f0; border:1px solid #e3eadf; border-radius:10px; }
+.reconcile-icon { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:#dfead9; color:#426e38; flex-shrink:0; }
+.flow-reconcile>div { display:flex; align-items:center; gap:18px; flex:1; flex-wrap:wrap; }
+.flow-reconcile strong { font-size:12px; color:#4e6d47; }
+.flow-reconcile div span { font-size:13px; color:#697766; }
+.flow-reconcile b { padding:0 10px; color:#9ba995; font-weight:400; }
+.reconcile-ratio { font-size:12px; color:#7b886e; white-space:nowrap; }
+.workflow-builder { padding:28px!important; border-radius:20px; max-height:90vh; }
+.workflow-builder .modal-title { margin-bottom:12px; }
+.workflow-builder .modal-title h2 { font-size:25px; letter-spacing:-.5px; }
+.workflow-builder .builder-intro { color:#7a867c; font-size:13px; line-height:1.7; margin-bottom:24px; }
+.workflow-builder .builder-top { grid-template-columns:2fr 1fr 1fr; gap:18px; padding:20px; background:#f5f7f2; border-radius:12px; margin-bottom:26px; }
+.workflow-builder .builder-top label { font-size:12px; color:#5b6e5d; margin:0; }
+.workflow-builder .builder-top input,.workflow-builder .builder-top select { font-size:14px; }
+.builder-section-title { display:flex; gap:14px; align-items:baseline; margin-bottom:14px; }
+.builder-section-title strong { font-size:16px; }
+.builder-section-title span { font-size:12px; color:#8a948b; }
+.workflow-builder .builder-steps { border:0; border-radius:0; overflow:visible; display:grid; gap:12px; }
+.workflow-builder .builder-row { padding:18px; border:1px solid #e2e7dc; border-left:3px solid #c3a25a; background:#fcfcf9; border-radius:12px; gap:10px 16px; grid-template-columns:60px minmax(160px,1.2fr) minmax(180px,1.8fr) 70px 95px; }
+.workflow-builder .builder-row.is-finished { border-left-color:#488543; background:#f4f8f1; }
+.workflow-builder .builder-stage { gap:8px; align-self:start; padding-top:3px; }
+.workflow-builder .builder-stage span { font-size:17px; font-weight:700; letter-spacing:0; }
+.workflow-builder .builder-stage strong { font-size:11px; color:#8a7754; font-weight:550; }
+.workflow-builder .is-finished .builder-stage span,.workflow-builder .is-finished .builder-stage strong { color:#508047; }
+.workflow-builder .builder-row label { color:#68796a; font-size:11px; font-weight:550; }
+.workflow-builder .builder-preview { font-size:11px; color:#889383; margin-top:2px; }
+.workflow-builder .flow-check { margin-top:24px; padding:18px 20px; background:#f3f6f0; border:1px solid #dde7d7; border-radius:12px; }
+.workflow-builder .flow-check>label { font-size:14px; margin-bottom:0; }
+.flow-check label small { font-size:10px; color:#8a937f; border:1px solid #d7dfd0; border-radius:4px; padding:2px 5px; margin-left:6px; font-weight:400; }
+.flow-check input[type=checkbox] { accent-color:#47803d; }
+.workflow-builder #flow-check-fields { margin-top:16px; padding-top:14px; border-top:1px solid #dfe7d9; font-size:13px; }
+.workflow-builder #flow-check-fields label { margin:0; font-size:11px; }
+.workflow-builder .flow-check p { font-size:12px; line-height:1.8; margin-top:12px; color:#87917e; }
+.workflow-builder .form-actions { margin-top:24px; padding-top:18px; border-top:1px solid #e8ece3; }
+@media(max-width:900px) {
+ .workflow-builder .builder-top { grid-template-columns:1fr 1fr; }
+ .workflow-builder .builder-top>label:first-child { grid-column:1/-1; }
+ .workflow-builder .builder-row { grid-template-columns:48px minmax(0,1fr) 75px 90px; }
+ .workflow-builder .builder-mode { grid-column:2/-1; }
+ .workflow-builder .builder-name { grid-column:2; }
+ .workflow-builder .builder-preview { grid-column:2/-1; }
+ .product-flow-card .workflow-steps { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+}
+@media(max-width:600px) {
+ .product-flow-card { padding:18px; }
+ .product-flow-card .card-head h2 { font-size:21px; }
+ .product-flow-card .workflow-steps { grid-template-columns:1fr; }
+ .flow-reconcile { flex-wrap:wrap; }
+ .flow-reconcile>div { gap:6px; flex-direction:column; align-items:flex-start; }
+ .reconcile-ratio { margin-left:40px; }
+ .workflow-builder { padding:20px!important; }
+ .workflow-builder .builder-top { padding:14px; gap:12px; }
+ .workflow-builder .builder-row { grid-template-columns:1fr 1fr; padding:14px; gap:12px; }
+ .workflow-builder .builder-stage { grid-column:1/-1; flex-direction:row; align-items:center; }
+ .workflow-builder .builder-mode,.workflow-builder .builder-name,.workflow-builder .builder-preview { grid-column:1/-1; }
+ .workflow-builder .flow-check { padding:14px; }
+}
+
+/* Backup page uses the same quiet typography and separators as the workspace. */
+.backup-panel { margin:8px 0 24px; padding:0; color:var(--text); }
+.backup-top { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 0 18px; border-bottom:1px solid var(--border); }
+.backup-panel h2 { font-size:18px; margin:0; }
+.backup-status { display:inline-block; margin-left:16px; font-size:13px; font-weight:500; color:#39764b; }
+.backup-panel p { margin:18px 0; font-size:14px; line-height:1.8; color:var(--muted); max-width:850px; }
+.backup-facts { display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:24px; padding:20px 0 30px; }
+.backup-facts small { display:block; font-size:12px; color:var(--muted); margin-bottom:10px; }
+.backup-facts strong { font-size:16px; font-weight:600; }
+.backup-panel details { border-top:1px solid var(--border); padding-top:18px; font-size:13px; color:var(--muted); }
+.backup-panel summary { cursor:pointer; }
+.backup-failed .backup-status,.backup-stale .backup-status { color:#b34632; }
+.backup-blocked .backup-status,.backup-pending .backup-status,.backup-running .backup-status,.backup-unavailable .backup-status { color:#986f23; }
+.backup-disabled .backup-status { color:var(--muted); }
+@media(max-width:700px) { .backup-facts { grid-template-columns:1fr; gap:22px; }.backup-top .quiet { white-space:nowrap; }.backup-status { margin-left:10px; } }
+.workflow-builder #flow-check-fields { display:block; }
+.workflow-builder #flow-check-fields[hidden] { display:none; }
+.flow-check-pair { display:flex; align-items:center; gap:18px; margin-top:8px; }
+.flow-check-pair select { flex:0 0 150px; width:150px; margin:0; }
+.flow-check-pair > span { line-height:1.6; }
+@media(max-width:600px) { .flow-check-pair { flex-wrap:wrap; gap:10px; } }
+
+.flow-check-pair > .lot-picker { flex:0 0 150px; width:150px; min-width:0; }
+
+/* Keep matching inventory measures in the same column across product rows. */
+@media(min-width:761px) { .manager-intake .intake-metrics.without-process-check > div:first-child { grid-column:2; } }

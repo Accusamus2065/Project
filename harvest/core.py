@@ -43,6 +43,8 @@ def initialize(path):
             db.execute("ALTER TABLE users ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0,1))")
         if "can_count" not in {r["name"] for r in db.execute("PRAGMA table_info(users)")}:
             db.execute("ALTER TABLE users ADD COLUMN can_count INTEGER NOT NULL DEFAULT 0 CHECK(can_count IN (0,1))")
+        # Preserve existing counting accounts and history under the employee role.
+        db.execute("UPDATE users SET role='employee',can_count=1 WHERE role='checker'")
         product_columns = {r['name'] for r in db.execute('PRAGMA table_info(products)')}
         for column,definition in [('process',"TEXT CHECK(process IN ('harvest','pack','seal'))"),('parent_id','INTEGER REFERENCES products(id)'),('family_name','TEXT')]:
             if column not in product_columns:
@@ -62,6 +64,9 @@ def initialize(path):
         for link in db.execute('SELECT * FROM process_links').fetchall():
             db.execute("UPDATE products SET process='pack' WHERE id=? AND process IS NULL",(link['source_id'],))
             db.execute("UPDATE products SET process='seal',parent_id=? WHERE id=? AND process IS NULL",(link['source_id'],link['target_id']))
+
+        from . import product_flows
+        product_flows.initialize(db)
 
 
 def password_hash(password, salt=None):
@@ -174,6 +179,7 @@ def _work_items(db, day):
     sales = {r["product_id"]: r for r in db.execute(
         "SELECT s.*,u.name AS recorder FROM direct_sales s JOIN users u ON u.id=s.actor WHERE date=?", (day,)
     )}
+    from . import product_flows
     pending_targets = {
         target for source, target in db.execute(
             "SELECT source_id,target_id FROM process_links WHERE start_date<=? "
@@ -181,6 +187,7 @@ def _work_items(db, day):
             (day, day),
         ) if source in reported_ids
     }
+    pending_targets.update(target for source,target in product_flows.edges(db,day) if source in reported_ids)
     result = []
     for product in db.execute(
         "SELECT * FROM products WHERE start_date<=? ORDER BY product,id", (day,)
@@ -231,6 +238,8 @@ def _work_items(db, day):
 
 
 def finished_name(product):
+    if product.get('step_name') and product.get('family_name') and product.get('stage') == 'finished':
+        return product['family_name']
     name = product['product']
     return name[:-3] if product.get('process') == 'seal' and name.endswith('·封膜') else name
 
@@ -266,9 +275,9 @@ def inventory(db, day):
         p['has_difference'] = bool(check and check['difference']) or (p['actual'] is not None and p['sales_recorded'] and p['difference'] != 0)
         p['missing_records'] = []
         if not p['contributors']:
-            p['missing_records'].append('封膜记录' if p['process'] == 'seal' or check else '成品生产记录')
+            p['missing_records'].append((p.get('step_name') or ('封膜' if p['process']=='seal' else '成品生产'))+'记录')
         if check and not check['packers']:
-            p['missing_records'].append('分包记录')
+            p['missing_records'].append('前道工序记录')
         if p['actual'] is None:
             p['missing_records'].append('点货记录')
         if not p['sales_recorded']:
@@ -288,6 +297,8 @@ def process_checks(db, day, inv=None):
     items = {r["id"]: r for r in (_work_items(db, day) if inv is None else inv)}
     edges = [tuple(r) for r in db.execute(
         "SELECT source_id,target_id FROM process_links WHERE start_date<=? UNION SELECT pack_id,seal_id FROM product_workflows WHERE start_date<=?", (day,day))]
+    from . import product_flows
+    edges = list(set(edges + product_flows.edges(db,day)))
     # Shared work is a graph: sum each physical work item once per component.
     groups = []
     for source,target in edges:
@@ -573,6 +584,9 @@ def save_report(db, actor, data):
                 "unit": snapshot["unit"],
                 "stage": snapshot.get("stage", "finished"),
                 "process": snapshot.get("process"),
+                "step_name": snapshot.get("step_name"),
+                "step_order": snapshot.get("step_order"),
+                "family_name": snapshot.get("family_name"),
                 "price": snapshot["price"],
                 "quantity": qty,
             }
@@ -687,6 +701,9 @@ def save_workflow(db, user, data):
 
 
 def mutate(db, user, action, data):
+    if action == "product_flow":
+        from . import product_flows
+        return product_flows.save(db,user,data)
     if action == "workflow":
         return save_workflow(db,user,data)
     if action == "process_link":
@@ -749,7 +766,7 @@ def mutate(db, user, action, data):
         else:
             username = text(data.get("username"), "登录名", 60)
             role = data.get("role", "employee")
-            if role not in ("employee", "manager", "checker"):
+            if role not in ("employee", "manager"):
                 raise RuleError("角色无效")
             db.execute(
                 "INSERT INTO users(username,name,role,rate,password,can_count) VALUES(?,?,?,?,?,?)",
@@ -819,6 +836,12 @@ def mutate(db, user, action, data):
             (w.harvest_id=? AND p.id IN (w.pack_id,w.seal_id)) OR (w.pack_id=? AND p.id=w.seal_id)
             WHERE p.deleted=0""",(before['id'],before['id'])).fetchone():
             raise RuleError('该工序仍有启用中的后续项目，请先停用所有相关后续工序')
+        from . import product_flows
+        for flow in product_flows.listing(db):
+            if before['id'] in flow['steps']:
+                following=flow['steps'][flow['steps'].index(before['id'])+1:]
+                if any(db.execute('SELECT deleted FROM products WHERE id=?',(pid,)).fetchone()[0]==0 for pid in following):
+                    raise RuleError('请先停用所有相关后续工序')
         db.execute("UPDATE products SET deleted=1 WHERE id=?", (before["id"],))
     else:
         raise RuleError("未知操作")
@@ -917,7 +940,11 @@ def state(db, user, day):
             else "na"
         )
         reports.append(r)
+    from . import product_flows, backup
+    database = db.execute("PRAGMA database_list").fetchone()[2]
     return {
+        **({"backup": backup.public_status(database)} if is_manager and database else {}),
+        "product_flows": product_flows.listing(db) if is_manager else [],
         "workflows": [dict(r) for r in db.execute("SELECT * FROM product_workflows ORDER BY id")] if is_manager else [],
         "process_checks": process_checks(db, day, inv) if is_manager else [],
         "process_links": (

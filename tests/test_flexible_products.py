@@ -65,7 +65,9 @@ class FlexibleProducts(unittest.TestCase):
         self.count(self.boss,seal,100,reason='复点')
         before=core.inventory(self.db,self.day)
         core.initialize(self.path);core.initialize(self.path)
-        self.assertEqual(core.inventory(self.db,self.day),before)
+        # Migration adds display metadata; reconciliation must remain identical.
+        without_display=lambda rows:[{k:v for k,v in r.items() if k not in ('step_name','step_order')} for r in rows]
+        self.assertEqual(without_display(core.inventory(self.db,self.day)),without_display(before))
         self.assertEqual(next(r for r in before if r['id']==seal)['status'],'passed')
         with self.assertRaises(core.RuleError):
             self.act(self.boss,'process_link',source_id=pack,target_id=seal,start_date=self.day)
@@ -105,3 +107,24 @@ class FlexibleProducts(unittest.TestCase):
         self.act(self.boss,'user',id=self.worker['id'],name='worker',rate=20,can_count=1)
         core.initialize(self.path)
         self.assertEqual(self.db.execute('SELECT can_count FROM users WHERE id=?',(self.worker['id'],)).fetchone()[0],1)
+
+    def test_legacy_counter_becomes_employee_and_permission_stays_revocable(self):
+        self.db.execute("INSERT INTO users(username,name,role,rate,password) VALUES('legacy','旧点货员','checker',0,'unused')")
+        self.db.commit()
+        core.initialize(self.path)
+        user=self.db.execute("SELECT * FROM users WHERE username='legacy'").fetchone()
+        self.assertEqual((user['role'],user['can_count']),('employee',1))
+        self.act(self.boss,'user',id=user['id'],name=user['name'],rate=0,can_count=0)
+        core.initialize(self.path)
+        user=self.db.execute("SELECT * FROM users WHERE username='legacy'").fetchone()
+        self.assertEqual((user['role'],user['can_count']),('employee',0))
+        with self.assertRaises(core.RuleError):
+            self.act(self.boss,'user',username='newcounter',name='新点货员',role='checker',rate=0,password='TestPassword123!')
+
+    def test_create_employee_with_optional_count_permission(self):
+        for enabled in (0,1):
+            username='newemployee'+str(enabled)
+            self.act(self.boss,'user',username=username,name=username,role='employee',rate=20,can_count=str(enabled),password='TestPassword123!')
+            user=self.db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
+            self.assertEqual(user['role'],'employee')
+            self.assertEqual(core.can_count(user),bool(enabled))

@@ -401,6 +401,9 @@ def main():
     core.initialize(path)
     if args.demo:
         seed(path)
+        from . import product_flows
+        with closing(core.connect(path)) as db, db:
+            product_flows.sync_legacy(db)
     if args.init_admin:
         import getpass
 
