@@ -82,6 +82,8 @@ def save(db,user,data):
     if old and start!=old['start_date'] and any(used(db,pid) for pid in old_ids):
         raise core.RuleError('已有工作记录的产品不能修改启用日期')
     before=dict(old) if old else None
+    if before:
+        before['steps']=[dict(db.execute('SELECT * FROM products WHERE id=?',(pid,)).fetchone()) for pid in old_ids]
     db.execute('SAVEPOINT product_flow')
     try:
         chosen=[]

@@ -35,3 +35,23 @@ assert.equal(v.rows.length,1);assert.equal(v.rows[0][0],'计件单价');
 console.log('Stage, unit and price-only audit checks passed');
 
 v=view('user_delete',{before:{name:'林晓',username:'employee'},after:{deleted:1}});assert.equal(v.title,'删除用户');assert.equal(v.subject,'林晓（employee）');assert.ok(v.note.includes('历史工作记录'));
+
+const step={id:7,product:'香菇·包装',stage:'finished',unit:'盒',price:125};
+v=view('product_flow',{before:null,after:{name:'香菇',start_date:'2026-10-21',steps:[step],check_source:null}});
+assert.equal(v.title,'创建产品工序');assert.equal(v.subject,'香菇');
+assert.ok(v.rows.some(r=>r[0]==='第 1 道工序 / 单价'&&r[2]==='1.25'));
+v=view('product_flow',{before:{name:'香菇',steps:[step],check_source:null},after:{name:'香菇',steps:[{...step,price:200}],check_source:null}});
+assert.equal(v.rows.length,1);assert.deepEqual(Array.from(v.rows[0]),['第 1 道工序 / 单价','1.25','2.00']);
+v=view('product_flow',{before:{name:'香菇',steps:'[7]',check_source:null},after:{name:'香菇',steps:[step],check_source:null}});
+assert.ok(v.note.includes('无法还原'));assert.ok(!v.rows.some(r=>r[1]==='1.25'));
+console.log('Product flow audit: creation, price changes and legacy snapshots passed');
+
+const appSource=readFileSync('harvest/web/app.js','utf8');
+vm.runInContext(appSource.slice(appSource.indexOf('function businessTime('),appSource.indexOf('const statusNames')),box);
+assert.equal(box.storageSize(null),'待检查');
+assert.equal(box.storageSize(0),'0 B');
+assert.equal(box.storageSize(37),'37 B');
+assert.equal(box.storageSize(167936),'167.9 KB');
+assert.equal(box.storageSize(1500000),'1.5 MB');
+assert.ok(box.businessTime('2026-07-01T04:30:00Z').includes('00:30:00'));
+assert.ok(box.businessTime('2026-12-01T05:30:00Z').includes('00:30:00'));

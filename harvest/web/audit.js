@@ -34,6 +34,34 @@ function auditView(record, context) {
         title = '创建产品流程'; subject = d.name;
         rows.push(['启用日期','未创建',d.start_date]);
         for (const p of d.steps || []) rows.push([({harvest:'采摘',pack:'分包',seal:'封膜'})[p.process], '—', `${p.product} · ${amount(p.price)} / ${p.unit}`]);
+    } else if (action === 'product_flow') {
+        title = d.before ? '修改产品工序' : '创建产品工序';
+        subject = d.after?.name || d.before?.name || '产品';
+        const flatten = snapshot => {
+            if (!snapshot) return null;
+            const result = {'成品名称': val(snapshot.name), '启用日期': val(snapshot.start_date)};
+            const steps = parse(snapshot.steps, []);
+            result['工序数量'] = `${steps.length} 道`;
+            steps.forEach((p, i) => {
+                const prefix = `第 ${i + 1} 道工序`;
+                if (typeof p !== 'object' || p === null) {
+                    result[prefix] = `工序 #${p}（旧记录未保存详情）`;
+                    return;
+                }
+                result[prefix] = val(p.product);
+                result[prefix + ' / 类型'] = p.stage === 'semi' ? '半成品' : '成品';
+                result[prefix + ' / 单位'] = val(p.unit);
+                result[prefix + ' / 单价'] = amount(p.price);
+            });
+            const sourceIndex = steps.findIndex(p => (typeof p === 'object' ? p?.id : p) === snapshot.check_source);
+            result['自动数量核对'] = snapshot.check_source == null ? '未开启' : sourceIndex < 0 ? '已开启（工序未记录）' : `第 ${sourceIndex + 1} 道 → 第 ${steps.length} 道，1:1`;
+            return result;
+        };
+        const before = flatten(d.before), after = flatten(d.after);
+        for (const key of new Set([...Object.keys(before || {}), ...Object.keys(after || {})]))
+            add(key, before?.[key] ?? (before ? '未记录' : '未创建'), after?.[key] ?? '已移除');
+        if (d.before && parse(d.before.steps, []).some(p => typeof p !== 'object'))
+            note = '这条旧记录未保存原工序名称、单位和单价，无法还原；此后修改将保留完整前后详情。';
     } else if (action === 'process_link') {
         title = '关联分装与封膜'; subject = d.source + ' → ' + d.target; rows.push(['关联', '未设置', subject], ['计量单位', '—', val(d.unit)], ['启用日期', '—', val(d.start_date)]);
     } else if (action === 'direct_sale') {

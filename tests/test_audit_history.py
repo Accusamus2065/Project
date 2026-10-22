@@ -35,6 +35,19 @@ class AuditHistory(unittest.TestCase):
         self.assertEqual(audit_log.browse(self.db,self.boss,dict(action='不存在'))['rows'],[])
         for actor in (self.worker,self.counter):
             with self.assertRaises(core.RuleError):audit_log.browse(self.db,actor,{})
-        for query in ({'page':'-1'},{'page':'1.5'},{'start':'bad'}, {'start':'2026-10-01'},
+        for query in ({'page':'-1'},{'page':'1.5'},{'start':'bad'}, {'start':'2026-10-01T00:00:00'},
             {'start':'2026-10-02T00:00:00Z','end':'2026-10-01T00:00:00Z'}):
             with self.assertRaises(core.RuleError):audit_log.browse(self.db,self.boss,query)
+
+    def test_toronto_calendar_dates_and_dst(self):
+        self.seed()
+        self.assertEqual(audit_log.browse(self.db,self.boss,dict(start='2026-09-30',end='2026-09-30'))['total'],50)
+        self.db.execute('DELETE FROM audit')
+        for stamp in ['2026-11-01T03:59:59+00:00','2026-11-01T04:00:00+00:00',
+                      '2026-11-02T04:59:59+00:00','2026-11-02T05:00:00+00:00']:
+            self.db.execute('INSERT INTO audit(at,actor,action,detail) VALUES(?,?,?,?)',
+                            (stamp,self.boss['id'],'test','{}'))
+        rows=audit_log.browse(self.db,self.boss,dict(start='2026-11-01',end='2026-11-01'))['rows']
+        self.assertEqual(len(rows),2)
+        with self.assertRaises(core.RuleError):
+            audit_log.browse(self.db,self.boss,dict(start='2026-11-02',end='2026-11-01'))

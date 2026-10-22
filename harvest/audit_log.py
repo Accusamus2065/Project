@@ -1,5 +1,6 @@
 """Read-only, manager-only historical audit browsing."""
 import datetime as dt
+from zoneinfo import ZoneInfo
 from . import core
 
 
@@ -12,7 +13,12 @@ def browse(db, user, query):
     for key, op in (('start', '>='), ('end', '<')):
         if query.get(key):
             try:
-                value = dt.datetime.fromisoformat(query[key])
+                if len(query[key]) == 10:
+                    day = dt.date.fromisoformat(query[key])
+                    if key == 'end': day += dt.timedelta(days=1)
+                    value = dt.datetime.combine(day, dt.time(), ZoneInfo('America/Toronto'))
+                else:
+                    value = dt.datetime.fromisoformat(query[key])
                 if value.tzinfo is None: raise ValueError()
                 value = value.astimezone(dt.timezone.utc)
             except (ValueError, TypeError, OverflowError):

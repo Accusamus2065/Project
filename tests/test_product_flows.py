@@ -19,6 +19,17 @@ class ProductFlowTests(unittest.TestCase):
     def editing(self,flow):
         return [dict(mode='edit',id=pid,name=p['step_name'],unit=p['unit'],price=p['price']/100) for pid in flow['steps'] for p in [self.db.execute('SELECT * FROM products WHERE id=?',(pid,)).fetchone()]]
 
+    def test_audit_preserves_old_step_price_and_name(self):
+        flow=self.create('旧产品',['包装'])
+        steps=self.editing(flow)
+        steps[0].update(name='采摘包装',price=2)
+        self.create('新产品',[],steps=steps,id=flow['id'],version=flow['version'])
+        detail=json.loads(self.db.execute("SELECT detail FROM audit WHERE action='product_flow' ORDER BY id DESC LIMIT 1").fetchone()[0])
+        self.assertEqual(detail['before']['steps'][0]['product'],'旧产品·包装')
+        self.assertEqual(detail['before']['steps'][0]['price'],50)
+        self.assertEqual(detail['after']['steps'][0]['product'],'新产品·采摘包装')
+        self.assertEqual(detail['after']['steps'][0]['price'],200)
+
     def test_one_two_three_steps_and_custom_names(self):
         for name,labels in [('150g香菇',['采摘','分装','封膜']),('180g平菇',['采摘分装','封膜']),('3lbmini',['采摘','剪根后']),('2lb平菇',['采摘包装'])]:
             f=self.create(name,labels)
