@@ -2255,8 +2255,9 @@ select:disabled{opacity:.6}.lot-chevron{width:8px;height:8px;margin-right:6px;fl
  .intake-metrics { gap:8px; }
  .intake-metrics strong { font-size:22px; }
  .checker-intake .intake-metrics { padding:12px; background:#f4f7ef; border-radius:10px; }
- .intake-identity { position:relative; padding-right:75px; }
- .intake-identity .badge { position:absolute; right:0; top:0; }
+ /* Status text can span several lines; keep it below the product name. */
+ .intake-identity { min-width:0; }
+ .intake-identity .badge { max-width:100%; }
  .export-preview { padding:18px 12px; }
 }
 .builder-name { font-size:12px; font-weight:600; }
