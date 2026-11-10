@@ -67,6 +67,10 @@ def initialize(path):
 
         from . import product_flows
         product_flows.initialize(db)
+        db.execute("""CREATE TABLE IF NOT EXISTS counting_settings(
+            product_id INTEGER NOT NULL REFERENCES products(id), date TEXT NOT NULL,
+            enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+            PRIMARY KEY(product_id,date))""")
 
 
 def password_hash(password, salt=None):
@@ -188,6 +192,8 @@ def _work_items(db, day):
         ) if source in reported_ids
     }
     pending_targets.update(target for source,target in product_flows.edges(db,day) if source in reported_ids)
+    settings = {r['product_id']: bool(r['enabled']) for r in db.execute(
+        'SELECT * FROM counting_settings WHERE date<=? ORDER BY date', (day,))}
     result = []
     for product in db.execute(
         "SELECT * FROM products WHERE start_date<=? ORDER BY product,id", (day,)
@@ -216,6 +222,7 @@ def _work_items(db, day):
         result.append(
             {
                 **dict(product),
+                "count_enabled": product['stage'] == 'finished' or settings.get(product['id'], False) or count is not None,
                 "expected": expected,
                 "actual": actual,
                 "direct_sold": sold,
@@ -253,7 +260,7 @@ def inventory(db, day):
         p['process_check'] = None
         p['intake_status'] = p['status']
         p['expected_intake'] = p['expected']-p['direct_sold']
-        if p['stage'] != 'finished':
+        if not p['count_enabled']:
             p['status'] = 'na'
     for check in checks:
         for tid in check['target_ids']:
@@ -268,11 +275,11 @@ def inventory(db, day):
             # A process discrepancy is visible even before a physical count exists.
             p['status'] = 'mismatch' if check['difference'] else p['intake_status']
     for p in items:
-        if p['stage'] != 'finished':
+        if not p['count_enabled']:
             continue
         check = p['process_check']
         p['needs_recount'] = p['intake_status'] == 'stale'
-        p['has_difference'] = bool(check and check['difference']) or (p['actual'] is not None and p['sales_recorded'] and p['difference'] != 0)
+        p['has_difference'] = bool(check and check['difference']) or (p['actual'] is not None and (p['stage']=='semi' or p['sales_recorded']) and p['difference'] != 0)
         p['missing_records'] = []
         if not p['contributors']:
             p['missing_records'].append((p.get('step_name') or ('封膜' if p['process']=='seal' else '成品生产'))+'记录')
@@ -280,7 +287,7 @@ def inventory(db, day):
             p['missing_records'].append('前道工序记录')
         if p['actual'] is None:
             p['missing_records'].append('点货记录')
-        if not p['sales_recorded']:
+        if p['stage']=='finished' and not p['sales_recorded']:
             p['missing_records'].append('直售登记')
         p['status'] = 'mismatch' if p['has_difference'] else 'stale' if p['needs_recount'] else 'pending' if p['missing_records'] else 'passed'
     for check in checks:
@@ -288,7 +295,8 @@ def inventory(db, day):
         linked_status = 'mismatch' if check['difference'] else next((v for v in ('mismatch','stale','pending') if v in relevant),'passed' if relevant else 'pending')
         for sid in check['source_ids']:
             if sid in by_id:
-                by_id[sid]['status'] = linked_status
+                own = by_id[sid]['status'] if by_id[sid]['count_enabled'] else 'passed'
+                by_id[sid]['status'] = next((v for v in ('mismatch','stale','pending') if v in (own,linked_status)), 'passed')
     return items
 
 
@@ -409,8 +417,8 @@ def save_count(db, user, data):
     row = next((r for r in inventory(db, day) if r["id"] == pid), None)
     if not row:
         raise RuleError("产品或日期无效")
-    if row["stage"] != "finished":
-        raise RuleError("只对成品点货，采摘和分包无需单独点货")
+    if not row["count_enabled"]:
+        raise RuleError("此半成品尚未开启点货，请经理在产品与单价中设置")
     if data.get("version") != row["version"]:
         raise RuleError("点货记录已更新，请刷新后重试")
     if data.get("signature") != row["signature"]:
@@ -544,15 +552,23 @@ def save_report(db, actor, data):
             raise RuleError("计件明细格式错误")
         pid = number(p.get("product_id"), "产品", minimum=1)
         product = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
-        key = str(p.get("snapshot_id", pid))
+        lot_number = p.get('lot_number', '')
+        if not isinstance(lot_number, str) or len(lot_number.strip()) > 80:
+            raise RuleError('Lot number 不能超过 80 个字符')
+        lot_number = lot_number.strip()
+        if lot_number and product and product['stage'] != 'finished':
+            raise RuleError('半成品不填写 Lot number')
+        key = str(p.get("snapshot_id") or pid)
         previous = historical.get(key)
         if previous and previous["product_id"] != pid:
             previous = None
         matches = [(k, v) for k, v in historical.items() if v["product_id"] == pid]
         if matches and previous is None:
-            if len(matches) != 1:
+            exact = [(k,v) for k,v in matches if v.get('lot_number','') == lot_number]
+            candidates = exact or matches
+            if len({v['price'] for k,v in candidates}) != 1:
                 raise RuleError("历史产品明细不明确，请刷新后重试")
-            key, previous = matches[0]
+            key, previous = candidates[0]
         elif not matches:
             key = str(pid)
         if (
@@ -561,19 +577,13 @@ def save_report(db, actor, data):
             or (product["deleted"] and previous is None)
         ):
             raise RuleError("产品不存在、未启用或已停用")
-        if key in seen or (
-            any(r["product_id"] == pid for r in saved)
-            and not (
-                previous
-                and all(
-                    r.get("snapshot_id") in historical
-                    for r in saved
-                    if r["product_id"] == pid
-                )
-            )
-        ):
-            raise RuleError("同一产品不能重复填写")
-        seen.add(key)
+        identity = (pid, lot_number) if lot_number or len(matches)<2 else (pid, '', key)
+        if identity in seen:
+            raise RuleError("同一产品和 Lot number 不能重复填写；半成品每个工序只填一行")
+        seen.add(identity)
+        # An explicit lot suffix prevents two new batches from sharing a snapshot key.
+        if lot_number:
+            key = str(pid) + ':lot:' + lot_number
         qty = number(p.get("quantity"), "计件数量", minimum=1)
         snapshot = previous or dict(product)
         saved.append(
@@ -589,6 +599,7 @@ def save_report(db, actor, data):
                 "family_name": snapshot.get("family_name"),
                 "price": snapshot["price"],
                 "quantity": qty,
+                "lot_number": lot_number,
             }
         )
         total += qty * snapshot["price"]
@@ -701,6 +712,23 @@ def save_workflow(db, user, data):
 
 
 def mutate(db, user, action, data):
+    if action == 'counting_setting':
+        manager(user)
+        pid = number(data.get('id'), '产品', minimum=1)
+        p = db.execute('SELECT * FROM products WHERE id=?',(pid,)).fetchone()
+        if not p or p['stage'] != 'semi' or p['deleted']:
+            raise RuleError('只能设置启用中的半成品')
+        if type(data.get('enabled')) is not bool:
+            raise RuleError('点货设置无效')
+        today = dt.date.today().isoformat()
+        old = db.execute('SELECT enabled FROM counting_settings WHERE product_id=? AND date<=? ORDER BY date DESC LIMIT 1',(pid,today)).fetchone()
+        before = bool(old[0]) if old else False
+        if data.get('previous') is not before:
+            raise RuleError('点货设置已变化，请刷新后重试')
+        db.execute('INSERT INTO counting_settings VALUES(?,?,?) ON CONFLICT(product_id,date) DO UPDATE SET enabled=excluded.enabled',(pid,today,int(data['enabled'])))
+        audit(db,user['id'],'counting_setting',{'product':p['product'],'before':before,'after':data['enabled'],'effective_date':today})
+        return {'ok':True}
+
     if action == "product_flow":
         from . import product_flows
         return product_flows.save(db,user,data)
@@ -893,7 +921,7 @@ def counting_inventory(inv):
                         else "stale" if r["intake_status"] == "stale" else "recorded"
                     )
                 }
-                for r in inv if r["stage"] == "finished"
+                for r in inv if r["count_enabled"]
             ]
 
 
@@ -942,6 +970,8 @@ def state(db, user, day):
         reports.append(r)
     from . import product_flows, backup
     database = db.execute("PRAGMA database_list").fetchone()[2]
+    current_settings = {r['product_id']: bool(r['enabled']) for r in db.execute(
+        'SELECT * FROM counting_settings WHERE date<=? ORDER BY date', (dt.date.today().isoformat(),))}
     return {
         **({"backup": backup.public_status(database)} if is_manager and database else {}),
         "product_flows": product_flows.listing(db) if is_manager else [],
@@ -959,11 +989,10 @@ def state(db, user, day):
         ),
         "user": public_user,
         "date": day,
-        "products": [
-            dict(r) for r in db.execute("SELECT * FROM products ORDER BY product,id")
-        ],
+        "products": [dict(r) | {"count_enabled": r["stage"] == "finished" or current_settings.get(r["id"], False)}
+                     for r in db.execute("SELECT * FROM products ORDER BY product,id")],
         "reports": reports,
-        "inventory": [{**p,"product":p["finished_name"]} for p in inv if p["stage"]=="finished"] if is_manager else counting_inventory(inv) if can_count(user) else [],
+        "inventory": [{**p,"product":p["finished_name"]} for p in inv if p["count_enabled"]] if is_manager else counting_inventory(inv) if can_count(user) else [],
         "users": (
             [
                 dict(r)

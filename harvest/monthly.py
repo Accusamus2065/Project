@@ -19,22 +19,33 @@ def decimal(value, scale=1):
     )
 
 
-def build(db, user, month, kind):
+def build(db, user, month, kind, start_date=None, end_date=None):
     core.manager(user)
-    if not isinstance(month, str) or not re.fullmatch(r"\d{4}-\d{2}", month):
-        raise core.RuleError("请选择有效月份（YYYY-MM）")
-    try:
-        start = dt.date.fromisoformat(month + "-01")
-        last = start.replace(day=calendar.monthrange(start.year, start.month)[1])
-    except ValueError:
-        raise core.RuleError("月份无效")
     today = dt.date.today()
-    if start > today:
-        raise core.RuleError("不能导出未来月份")
+    custom = start_date is not None or end_date is not None
+    if custom:
+        begin = core.date(start_date)
+        end = core.date(end_date)
+        if begin > end:
+            raise core.RuleError('开始日期不能晚于结束日期')
+        if (dt.date.fromisoformat(end)-dt.date.fromisoformat(begin)).days > 366:
+            raise core.RuleError('单次导出日期范围不能超过 367 天')
+        last = dt.date.fromisoformat(end)
+        month = begin + '至' + end
+    else:
+        if not isinstance(month, str) or not re.fullmatch(r"\d{4}-\d{2}", month):
+            raise core.RuleError("请选择有效月份（YYYY-MM）")
+        try:
+            start = dt.date.fromisoformat(month + "-01")
+            last = start.replace(day=calendar.monthrange(start.year, start.month)[1])
+        except ValueError:
+            raise core.RuleError("月份无效")
+        if start > today:
+            raise core.RuleError("不能导出未来月份")
+        end = min(last, today).isoformat()
+        begin = start.isoformat()
     if kind not in ("employees", "products"):
         raise core.RuleError("报表类型无效")
-    end = min(last, today).isoformat()
-    begin = start.isoformat()
     reports = db.execute(
         "SELECT * FROM reports WHERE date BETWEEN ? AND ? ORDER BY date,id",
         (begin, end),
@@ -210,7 +221,7 @@ def build(db, user, month, kind):
     return {
         "month": month,
         "kind": kind,
-        "title": title,
+        "title": title.replace("月度", "区间") if custom else title,
         "start": begin,
         "end": end,
         "partial": last > today,

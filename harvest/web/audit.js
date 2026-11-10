@@ -11,14 +11,15 @@ function auditView(record, context) {
     const roles = { manager: '经理', employee: '普通员工', checker: '点货员' };
     let title = action, subject = '', rows = [], note = '';
     const add = (label, before, after) => { if (before !== after) rows.push([label, before, after]) };
-    if (action === '提交日报' || action === '修改日报') {
+    if(action === 'counting_setting'){title='半成品点货设置';subject=d.product;rows.push(['入库点货',d.before?'开启':'关闭',d.after?'开启':'关闭'],['生效日期','—',d.effective_date]);}
+    else if (action === '提交日报' || action === '修改日报') {
         subject = `${d.user_name || userName(d.user_id)} · ${d.date || '日期未记录'}`;
         const flatten = r => {
             if (!r) return null;
             const result = { '总工时': hours(r.minutes), '计时时薪': amount(r.rate) + ' / 小时', '当天总金额': amount(r.amount) };
             if (r.minutes) result['平均每小时产值'] = amount(r.amount * 60 / r.minutes) + ' / 小时';
             for (const p of parse(r.pieces, [])) {
-                const name = (p.product || '产品') + (!p.process && p.stage === 'semi' ? '（半成品 · ' + p.unit + '）' : '');
+                const name = (p.product || '产品') + (p.lot_number ? ' · Lot '+p.lot_number : '') + (!p.process && p.stage === 'semi' ? '（半成品 · ' + p.unit + '）' : '');
                 result[name + ' / 数量'] = `${p.quantity} ${p.unit || ''}`;
                 result[name + ' / 单价'] = amount(p.price) + ' / ' + (p.unit || '件');
             }

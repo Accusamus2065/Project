@@ -121,6 +121,13 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 return self.send(401, {"error": "请先登录"})
             try:
+                if parsed.path == "/api/batch-catalog":
+                    from . import batches
+                    return self.send(200, batches.catalog(db, user))
+                if parsed.path == "/api/batch-search":
+                    from . import batches
+                    db.execute('BEGIN')
+                    return self.send(200, batches.search(db,user,parse_qs(parsed.query).get('lot',[''])[0]))
                 if parsed.path == "/api/audit":
                     db.execute("BEGIN")
                     return self.send(200, audit_log.browse(db, user,
@@ -133,6 +140,7 @@ class Handler(BaseHTTPRequestHandler):
                         user,
                         query.get("month", [""])[0],
                         query.get("kind", [""])[0],
+                        query.get("start", [None])[0], query.get("end", [None])[0],
                     )
                     if parsed.path == "/api/monthly-export":
                         return self.send(

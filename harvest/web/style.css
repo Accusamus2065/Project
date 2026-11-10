@@ -2188,7 +2188,7 @@ select:disabled{opacity:.6}.lot-chevron{width:8px;height:8px;margin-right:6px;fl
 /* Full-width operational rows and responsive reporting. */
 .intake-list.intake-rows { display:flex; flex-direction:column; gap:12px; }
 .intake-rows .intake-row { display:grid; grid-template-columns:minmax(160px,1.2fr) minmax(280px,1.8fr) auto; gap:20px; align-items:center; padding:22px 24px; margin:0; }
-.intake-identity h2 { font-size:18px; margin:5px 0 10px; overflow-wrap:anywhere; }
+.intake-identity h3 { font-size:18px; margin:5px 0 10px; overflow-wrap:anywhere; }
 .intake-identity small { color:var(--muted); font-size:12px; }
 .intake-metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
 .intake-metrics small { font-size:12px; display:block; color:var(--muted); margin-bottom:6px; }
@@ -2230,6 +2230,11 @@ select:disabled{opacity:.6}.lot-chevron{width:8px;height:8px;margin-right:6px;fl
 .shared-step { display:flex; flex-direction:column; }
 .shared-step .workflow-step { flex:1; }
 .shared-label { color:#7a642d; font-size:12px; padding:6px 12px; background:#f7efdf; border-radius:8px; margin-bottom:6px; }
+/* Reserve the same two-button action column on every manager card. */
+@media(min-width:1201px) {
+ .manager-intake .intake-row { grid-template-columns:minmax(160px,1.2fr) minmax(280px,1.8fr) 12rem; }
+ .manager-intake .intake-actions { justify-content:flex-end; }
+}
 @media(max-width:1200px) {
  .intake-rows .intake-row { grid-template-columns:minmax(150px,1fr) minmax(240px,1.5fr); }
  .intake-rows .intake-actions { grid-column:2; justify-content:flex-end; }
@@ -2391,6 +2396,10 @@ input::placeholder, textarea::placeholder { font-weight:400; }
 .passed-group { border:1px solid var(--border); border-radius:14px; padding:18px; background:#f1f6ef; }
 .passed-group > summary { cursor:pointer; font-weight:600; color:#3d6650; padding:4px; }
 .passed-group .intake-row { margin-top:18px; }
+@media(min-width:761px) {
+ .manager-intake .passed-group { padding-inline:0; border-inline:0; }
+ .manager-intake .passed-group > summary { padding-inline:22px; }
+}
 .reconcile-overview { margin-top:20px; padding:20px; border-radius:12px; background:#fff7e9; border-left:3px solid #ba872d; }
 .reconcile-overview > strong { font-size:18px; }
 .reconcile-overview ul { margin:12px 0; padding-left:20px; line-height:1.8; }
@@ -2583,3 +2592,94 @@ input::placeholder, textarea::placeholder { font-weight:400; }
 
 /* Keep matching inventory measures in the same column across product rows. */
 @media(min-width:761px) { .manager-intake .intake-metrics.without-process-check > div:first-child { grid-column:2; } }
+
+/* Batch references stay next to the product and quantity without widening phones. */
+@media(min-width:701px) {
+ .piece-row { grid-template-columns:minmax(140px,2fr) minmax(100px,1fr) 90px 85px 30px; }
+}
+.piece-lot { margin:0; min-width:0; }
+.piece-lot input { width:100%; min-width:0; }
+.batch-tag { display:inline-block; margin:0 8px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.count-setting { width:100%; margin-top:12px; font-size:12px; color:var(--muted); }
+.count-setting.is-enabled { background:#edf5e9; color:#287035; border-color:#c9ddc4; }
+.batch-search { display:flex; gap:16px; align-items:flex-end; }
+.batch-search label { flex:1; max-width:500px; margin:0; }
+.batch-totals { display:flex; flex-wrap:wrap; gap:24px; margin:24px 0; }
+.batch-totals>div { min-width:0; overflow-wrap:anywhere; }
+.batch-totals>div:not(:last-child) { padding-right:24px; border-right:1px solid var(--border); }
+.batch-totals strong { display:block; font-size:26px; margin-top:8px; }
+.batch-totals small { color:var(--muted); }
+@media(min-width:761px) {
+ .manager-intake .intake-metrics.semi-metrics > div:first-child { grid-column:3; }
+}
+@media(max-width:700px) {
+ .piece-data .piece-lot { grid-column:1/-1; display:block; margin:8px 0; }
+ .batch-search { flex-direction:column; align-items:stretch; }
+ .batch-search label { max-width:none; }
+}
+.export-controls [hidden] { display:none!important; }
+@media(min-width:701px) {
+ .piece-data .lot-picker { grid-column:1; grid-row:1; }
+ .piece-data .piece-lot { grid-column:2; grid-row:1; }
+ .piece-data .piece-quantity input { grid-column:3; grid-row:1; }
+ .piece-data .line-amount { grid-column:4; grid-row:1; }
+ .piece-data>.remove { grid-column:5; grid-row:1; }
+}
+@media(max-width:700px) {
+ .piece-data .piece-lot { grid-row:4; }
+ .piece-data .piece-quantity,.piece-data .line-amount { grid-row:5; }
+}
+
+/* Keep filters together; report actions travel with the preview. */
+.export-controls { grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end; }
+.export-controls[data-period="range"] { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.export-controls > label { min-width:0; grid-column:auto; }
+.export-controls input,.export-controls .lot-trigger { width:100%; min-width:0; height:48px; margin:0; }
+.export-controls input[type="month"] { min-height:48px; }
+.report-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+.report-toolbar h2 { margin:0; }
+.report-actions { display:flex; align-items:center; gap:8px; }
+.report-actions button { padding:8px 16px; min-height:40px; }
+#monthly-reload { background:transparent; color:var(--muted); border-color:transparent; }
+#monthly-reload:hover { background:#edf4e9; color:var(--green); }
+@media(max-width:700px) {
+ .export-controls,.export-controls[data-period="range"] { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+ .export-controls[data-period="month"] > label:last-child { grid-column:1/-1; }
+ .export-controls[data-period="range"] > label:last-child { grid-column:2; grid-row:1; }
+ .report-actions button { min-height:44px; padding:8px 12px; }
+}
+
+.batch-result h2 { margin:0; overflow-wrap:anywhere; }
+.batch-detail-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; border-top:1px solid var(--border); padding:18px 0 12px; }
+.batch-detail-head h3 { font-size:16px; margin:0; }
+.batch-detail-head small { margin-left:6px; font-size:13px; font-weight:400; color:var(--muted); }
+#batch-download { padding:8px 14px; color:var(--green); }
+
+.intake-unregistered { margin-top:auto; font-size:13px; font-weight:500; color:var(--muted); line-height:1.8; }
+.intake-family { background:white; border:1px solid var(--border); border-radius:12px; }
+.intake-family > h2 { margin:0; padding:15px 24px; font-size:18px; color:var(--green); background:#f3f7ef; border-radius:12px 12px 0 0; }
+.intake-rows .intake-family > .intake-row { margin:0; padding-inline:24px; border:0; border-radius:0; box-shadow:none; background:transparent; }
+.intake-family > .intake-row + .intake-row { border-top:1px solid var(--border); }
+.passed-group > .intake-family { margin-top:14px; }
+@media(max-width:760px) {
+ .intake-family > h2 { padding-inline:18px; }
+ .intake-rows .intake-family > .intake-row { padding-inline:18px; }
+}
+.batch-search label { max-width:none; }
+.batch-actions { display:flex; gap:8px; }
+.batch-directory header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding-bottom:16px; }
+.batch-directory header h2,.batch-product h3 { margin:0; }
+.batch-directory header small,.batch-links span { color:var(--muted); }
+.batch-product { display:grid; grid-template-columns:minmax(140px,1fr) 3fr; gap:18px; border-top:1px solid var(--border); padding:18px 0; align-items:baseline; }
+.batch-product:last-child { padding-bottom:0; }
+.batch-product h3 { font-size:16px; font-weight:500; overflow-wrap:anywhere; }
+.batch-links { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:8px; }
+.batch-links button { display:flex; font-weight:400; align-items:center; text-align:left; gap:10px; padding:10px 14px; background:#f5f8f3; min-height:44px; }
+.batch-links strong { color:var(--green); font-weight:400; overflow-wrap:anywhere; margin-right:auto; }
+.batch-links span { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.batch-links i { font-style:normal; color:var(--muted); }
+.batch-links button:hover { border-color:#82a485; }
+@media(max-width:700px) {
+ .batch-product { grid-template-columns:1fr; gap:10px; }
+ .batch-actions button { flex:1; }
+}

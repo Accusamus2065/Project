@@ -40,6 +40,18 @@ class HTTPWorkflow(unittest.TestCase):
         status,body,_=self.request('/api/state',cookie=cookie)
         self.assertEqual(status,200)
         return cookie,json.loads(body)['csrf']
+    def test_batch_lookup_and_custom_export_permissions(self):
+        boss, _ = self.login('boss')
+        worker, _ = self.login('worker')
+        for endpoint in ('/api/batch-search?lot=TEST', '/api/monthly?start=2025-09-25&end=2025-10-25&kind=employees', '/api/monthly-export?start=2025-09-25&end=2025-10-25&kind=employees'):
+            self.assertEqual(self.request(endpoint)[0], 401)
+            self.assertEqual(self.request(endpoint, cookie=worker)[0], 400)
+            self.assertEqual(self.request(endpoint, cookie=boss)[0], 200)
+        _, raw, _ = self.request('/api/monthly?start=2025-09-25&end=2025-10-25&kind=employees', cookie=boss)
+        report = json.loads(raw)
+        self.assertEqual((report['start'], report['end']), ('2025-09-25', '2025-10-25'))
+        self.assertEqual(report['title'], '员工区间核算')
+
     def test_unauthenticated_and_origin(self):
         for asset in ('/nebo-logo.webp','/nebo-icon.png','/audit.js','/apple-touch-icon.png','/icon-192.png','/icon-512.png','/manifest.webmanifest'):
             self.assertEqual(self.request(asset)[0],200)
