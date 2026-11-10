@@ -5,11 +5,11 @@ from . import core
 
 def search(db, user, lot):
     core.manager(user)
-    lot = core.text(lot, 'Lot number', 80)
+    lot = core.canonical_lot(core.text(lot, 'Lot number', 80))
     rows, groups = [], {}
     for report in db.execute('SELECT r.*,u.name,u.username FROM reports r JOIN users u ON u.id=r.user_id ORDER BY r.date DESC,r.id DESC'):
         for piece in json.loads(report['pieces']):
-            if piece.get('stage','finished') != 'finished' or piece.get('lot_number') != lot:
+            if piece.get('stage','finished') != 'finished' or core.canonical_lot(piece.get('lot_number', '')) != lot:
                 continue
             row = dict(date=report['date'], report_id=report['id'], employee=report['name'],
                        username=report['username'], product_id=piece['product_id'],
@@ -27,7 +27,7 @@ def catalog(db, user):
     products = {}
     for report in db.execute('SELECT pieces FROM reports ORDER BY date DESC, id DESC'):
         for piece in json.loads(report['pieces']):
-            lot = piece.get('lot_number')
+            lot = core.canonical_lot(piece.get('lot_number', ''))
             if not lot or piece.get('stage', 'finished') != 'finished':
                 continue
             key = (piece['product_id'], piece['unit'])

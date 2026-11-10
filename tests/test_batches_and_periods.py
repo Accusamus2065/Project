@@ -78,7 +78,7 @@ class NewFeatures(unittest.TestCase):
         self.assertEqual(len(result['rows']),4)
         self.assertEqual({p['product']:p['quantity'] for p in result['products']},{'2lb平菇':130,'香菇':10})
         self.assertEqual({r['username'] for r in result['rows']},{'worker','counter'})
-        self.assertEqual(batches.search(self.db,self.boss,'shared')['rows'],[])
+        self.assertEqual(batches.search(self.db,self.boss,'shared'),result)
 
     def test_count_setting_history_and_stale_editor(self):
         self.db.execute("INSERT INTO counting_settings VALUES(2,'2025-09-25',1)")
@@ -88,3 +88,12 @@ class NewFeatures(unittest.TestCase):
         self.assertFalse(next(r for r in core.inventory(self.db,self.today) if r['id']==2)['count_enabled'])
         with self.assertRaises(core.RuleError):
             self.act(self.boss,'counting_setting',id=2,enabled=True,previous=True)
+
+    def test_case_variants_in_old_and_new_reports(self):
+        self.report(date='2025-09-25',pieces=[dict(product_id=1,quantity=50,lot_number='aB01')])
+        raw=self.db.execute('SELECT pieces FROM reports').fetchone()[0]
+        self.assertEqual(json.loads(raw)[0]['lot_number'],'AB01')
+        self.db.execute('UPDATE reports SET pieces=?',(raw.replace('AB01','ab01'),))
+        self.report(date='2025-09-26',pieces=[dict(product_id=1,quantity=60,lot_number='Ab01')])
+        self.assertEqual(batches.search(self.db,self.boss,'aB01')['products'][0]['quantity'],110)
+        self.assertEqual(batches.catalog(self.db,self.boss)['products'][0]['lots'],[dict(number='AB01',quantity=110)])

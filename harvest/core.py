@@ -498,6 +498,13 @@ def save_direct_sale(db, user, data):
     return {"ok": True}
 
 
+_LOT_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+
+def canonical_lot(value):
+    return value.strip().translate(_LOT_UPPER)
+
+
 def save_report(db, actor, data):
     if actor["role"] not in ("manager", "employee"):
         raise RuleError("点货员请使用当天入库点货入口")
@@ -555,7 +562,7 @@ def save_report(db, actor, data):
         lot_number = p.get('lot_number', '')
         if not isinstance(lot_number, str) or len(lot_number.strip()) > 80:
             raise RuleError('Lot number 不能超过 80 个字符')
-        lot_number = lot_number.strip()
+        lot_number = canonical_lot(lot_number)
         if lot_number and product and product['stage'] != 'finished':
             raise RuleError('半成品不填写 Lot number')
         key = str(p.get("snapshot_id") or pid)
@@ -564,7 +571,7 @@ def save_report(db, actor, data):
             previous = None
         matches = [(k, v) for k, v in historical.items() if v["product_id"] == pid]
         if matches and previous is None:
-            exact = [(k,v) for k,v in matches if v.get('lot_number','') == lot_number]
+            exact = [(k,v) for k,v in matches if canonical_lot(v.get('lot_number', '')) == lot_number]
             candidates = exact or matches
             if len({v['price'] for k,v in candidates}) != 1:
                 raise RuleError("历史产品明细不明确，请刷新后重试")
@@ -578,11 +585,23 @@ def save_report(db, actor, data):
         ):
             raise RuleError("产品不存在、未启用或已停用")
         identity = (pid, lot_number) if lot_number or len(matches)<2 else (pid, '', key)
-        if identity in seen:
+        # Older reports may contain two independent price snapshots for case variants.
+        preserve_variant = (
+            lot_number and key == p.get('snapshot_id') and previous
+            and canonical_lot(previous.get('lot_number', '')) == lot_number
+            and sum(canonical_lot(v.get('lot_number', '')) == lot_number for _, v in matches) > 1
+        )
+        if preserve_variant:
+            identity = (pid, lot_number, key)
+        duplicate_lot = lot_number and any(
+            other[:2] == (pid, lot_number) and (not preserve_variant or len(other) == 2)
+            for other in seen
+        )
+        if identity in seen or duplicate_lot:
             raise RuleError("同一产品和 Lot number 不能重复填写；半成品每个工序只填一行")
         seen.add(identity)
         # An explicit lot suffix prevents two new batches from sharing a snapshot key.
-        if lot_number:
+        if lot_number and not preserve_variant:
             key = str(pid) + ':lot:' + lot_number
         qty = number(p.get("quantity"), "计件数量", minimum=1)
         snapshot = previous or dict(product)
@@ -953,6 +972,8 @@ def state(db, user, day):
         r = dict(r)
         r["pieces"], r["timed"] = json.loads(r["pieces"]), json.loads(r["timed"])
         for p in r["pieces"]:
+            if p.get("lot_number"):
+                p["lot_number"] = canonical_lot(p["lot_number"])
             p.pop("code", None)
             p.pop("lot_id", None)
         statuses = [
