@@ -18,6 +18,8 @@ def search(db, user, lot):
             key = (piece['product_id'],piece['unit'])
             group = groups.setdefault(key,dict(product=piece['product'],unit=piece['unit'],quantity=0))
             group['quantity'] += piece['quantity']
+    if not rows and not (lot.isascii() and lot.isalnum()):
+        raise core.RuleError('批号只能包含连续的英文字母和数字，不能含空格或符号')
     return dict(lot_number=lot, rows=rows, products=list(groups.values()))
 
 

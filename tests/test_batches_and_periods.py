@@ -97,3 +97,10 @@ class NewFeatures(unittest.TestCase):
         self.report(date='2025-09-26',pieces=[dict(product_id=1,quantity=60,lot_number='Ab01')])
         self.assertEqual(batches.search(self.db,self.boss,'aB01')['products'][0]['quantity'],110)
         self.assertEqual(batches.catalog(self.db,self.boss)['products'][0]['lots'],[dict(number='AB01',quantity=110)])
+
+    def test_new_lot_requires_ascii_letters_and_digits(self):
+        for invalid in ('AB 12', 'AB-12', 'AB　12', '  ', 'AB12 ', 'Ａ１２'):
+            with self.subTest(invalid=invalid), self.assertRaises(core.RuleError):
+                self.report(pieces=[dict(product_id=1,quantity=1,lot_number=invalid)])
+        self.report(pieces=[dict(product_id=1,quantity=1,lot_number='ab12')])
+        self.assertEqual(batches.search(self.db,self.boss,'ab12')['products'][0]['quantity'],1)

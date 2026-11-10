@@ -562,7 +562,8 @@ def save_report(db, actor, data):
         lot_number = p.get('lot_number', '')
         if not isinstance(lot_number, str) or len(lot_number.strip()) > 80:
             raise RuleError('Lot number 不能超过 80 个字符')
-        lot_number = canonical_lot(lot_number)
+        raw_lot = lot_number
+        lot_number = canonical_lot(raw_lot)
         if lot_number and product and product['stage'] != 'finished':
             raise RuleError('半成品不填写 Lot number')
         key = str(p.get("snapshot_id") or pid)
@@ -584,6 +585,10 @@ def save_report(db, actor, data):
             or (product["deleted"] and previous is None)
         ):
             raise RuleError("产品不存在、未启用或已停用")
+        if raw_lot and not (raw_lot.isascii() and raw_lot.isalnum()):
+            # Keep an unchanged legacy identifier editable with its original report.
+            if not previous or raw_lot != raw_lot.strip() or not lot_number or canonical_lot(previous.get('lot_number', '')) != lot_number:
+                raise RuleError('批号只能包含连续的英文字母和数字，不能含空格或符号')
         identity = (pid, lot_number) if lot_number or len(matches)<2 else (pid, '', key)
         # Older reports may contain two independent price snapshots for case variants.
         preserve_variant = (
